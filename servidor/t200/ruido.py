@@ -81,7 +81,7 @@ def mezclar(x, y, banco_split, rng, snr=None, todos=None, puro=False):
     else:
         y2[4] = -1.0
     if len(snrs) == len(used) and max(snrs.values()) < 0.0:
-        for k in range(4):
+        for k in [k for k in range(len(y2)) if k != 4]:
             if y2[k] == 1.0:
                 y2[k] = -1.0
     return x2.astype(np.float32), y2

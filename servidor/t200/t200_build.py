@@ -121,6 +121,8 @@ def job(item):
                 if 0 <= t0 <= n_sec - int(WIN_S):
                     starts.add(t0)
                     last = t
+    if item.get("starts") is not None:
+        starts = set(item["starts"])
     starts = sorted(starts)
     out = []
     for c0 in range(0, n_sec, CHUNK_S):
@@ -194,6 +196,12 @@ def items_cpsc2021(stride):
             for p in paths]
 
 
+SEED_OFF = int(os.environ.get("ICENTIA_SEED", "0"))
+SKIP = set()
+if os.environ.get("ICENTIA_SKIP_META"):
+    SKIP = set(str(r) for r in np.load(os.environ["ICENTIA_SKIP_META"])["rec"])
+
+
 def items_icentia(n_segs, stride, cap, max_pat):
     pats = sorted(glob.glob(str(BASES / "icentia11k/p*/p*")))
     pats = [p for p in pats if os.path.isdir(p)]
@@ -206,7 +214,10 @@ def items_icentia(n_segs, stride, cap, max_pat):
                       if os.path.exists(s[:-4] + ".dat"))
         if not segs:
             continue
-        rng = np.random.default_rng(int(os.path.basename(p)[1:]))
+        rng = np.random.default_rng(int(os.path.basename(p)[1:]) + SEED_OFF)
+        segs = [x for x in segs if os.path.basename(x) not in SKIP]
+        if not segs:
+            continue
         pick = rng.choice(segs, min(n_segs, len(segs)), replace=False)
         for s in pick:
             out.append({"db": "icentia11k", "path": s, "rec": os.path.basename(s),
