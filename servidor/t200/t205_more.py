@@ -254,3 +254,185 @@ def job_chapman(item):
 
 
 TB.GROUPS["n_chapman"] = (items_chapman, job_chapman)
+
+
+# ---------------------------------------------------------------- bases con latidos anotados (tanda 2)
+KIND = {"V": "V", "F": "V", "E": "V", "S": "S", "A": "S", "a": "S", "J": "J", "j": "J", "/": "P", "f": "P",
+        "N": "N", "L": "N", "R": "N", "B": "N", "e": "N", "n": "N", "Q": "N", "r": "N"}
+BAD_SYM = {"~", '"', "|", "=", "!", "[", "]"}
+BAD_AUX = ("ARTIFACT", "OFF", "ZERO", "CAUTERY", "NOISE", "UNREADABLE")
+CFG2 = {
+    "mghdb": {"dir": "mghdb", "ext": "ari", "stride": 30, "cap": 150, "fa": -1.0,
+              "leads": (("ECG LEAD II", "II"), ("ECG LEAD V", "V", "ECG LEAD V5", "ECG LEAD V1"), ("ECG LEAD I", "I"))},
+    "nsrdb": {"dir": "nsrdb", "ext": "atr", "stride": 180, "cap": 100, "fa": 0.0, "leads": None},
+    "chfdb": {"dir": "chfdb", "ext": "ecg", "stride": 180, "cap": 300, "fa": -1.0, "leads": None},
+    "stdb": {"dir": "stdb", "ext": "atr", "stride": 60, "cap": 100, "fa": -1.0, "leads": None},
+    "excluded": {"dir": "excluded", "ext": "atr", "stride": 120, "cap": 300, "fa": -1.0, "leads": None},
+    "ltstdb": {"dir": "ltstdb", "ext": "atr", "stride": 120, "cap": 200, "fa": -1.0, "leads": None},
+}
+
+
+def items_beats(db):
+    def f():
+        d = B2 / CFG2[db]["dir"]
+        hs = sorted(glob.glob(str(d / "**/*.hea"), recursive=True))
+        ps = [h[:-4] for h in hs if os.path.exists(h[:-4] + "." + CFG2[db]["ext"]) and os.path.exists(h[:-4] + ".dat")]
+        sp = B.split_of([os.path.basename(p) for p in ps])
+        return [{"db": db, "path": p, "rec": os.path.basename(p), "split": sp[os.path.basename(p)]} for p in ps]
+    return f
+
+
+def job_beats(item):
+    db, path, rec, split = item["db"], item["path"], item["rec"], item["split"]
+    cfg = CFG2[db]
+    hdr = wfdb.rdheader(path)
+    ann = wfdb.rdann(path, cfg["ext"])
+    fs0 = float(hdr.fs)
+    n_sec = hdr.sig_len / fs0
+    names = [str(n).upper().strip() for n in hdr.sig_name]
+    if cfg["leads"]:
+        slots = []
+        for cands in cfg["leads"]:
+            slots.append(next((names.index(c) for c in cands if c in names), -1))
+        if slots[0] < 0 and slots[1] < 0 and slots[2] < 0:
+            return []
+    else:
+        ecg = [i for i, n in enumerate(names) if "ECG" in n or n in ("II", "V1", "V5", "MLII", "ML2", "MV1", "MV5", "V2", "V3", "V4", "V6", "I", "III", "AVF", "MLIII", "V", "ML5")]
+        ecg = ecg or list(range(len(names)))
+        sub = B.slots_for([names[i] for i in ecg])
+        slots = [ecg[s] if s >= 0 else -1 for s in sub]
+    bt, bk, bad = [], [], []
+    for s, sym, aux in zip(ann.sample, ann.symbol, ann.aux_note, strict=False):
+        sym = str(sym)
+        a = (aux or "").strip("\x00 ").upper()
+        if sym in BAD_SYM or any(x in a for x in BAD_AUX):
+            bad.append(s / fs0)
+        k = KIND.get(sym)
+        if k:
+            bt.append(s / fs0)
+            bk.append(k)
+    if len(bt) < 50:
+        return []
+    bt, bad = np.array(bt), np.array(bad)
+
+    def runs(kind):
+        eps, i, n = [], 0, len(bt)
+        while i < n:
+            if bk[i] == kind:
+                j = i
+                while j + 1 < n and bk[j + 1] == kind and bt[j + 1] - bt[j] < 0.6:
+                    j += 1
+                if j - i + 1 >= 3:
+                    eps.append((bt[i], bt[j]))
+                i = j + 1
+            else:
+                i += 1
+        return eps
+    rv, rs = runs("V"), runs("S")
+    rng = np.random.default_rng(zlib.crc32(f"{db}/{rec}".encode()))
+    starts = set(range(0, int(n_sec - WIN_S), cfg["stride"]))
+    ect = [t for t, k in zip(bt, bk, strict=True) if k in ("V", "S")]
+    if len(ect) > cfg["cap"]:
+        ect = list(rng.choice(ect, cfg["cap"], replace=False))
+    starts |= {int(t - 5) for t in ect if 5 <= t < n_sec - WIN_S}
+    starts |= {int((s + e) / 2 - 5) for s, e in rv + rs if 5 <= (s + e) / 2 < n_sec - WIN_S}
+
+    def ov(eps, t0):
+        t1 = t0 + WIN_S
+        return any(e > t0 and s < t1 and min(e, t1) - max(s, t0) >= min(1.0, e - s) * 0.999 for s, e in eps)
+    out = []
+    CH = 1800
+    for c0 in range(0, int(n_sec), CH):
+        st = sorted(t for t in starts if c0 <= t < c0 + CH)
+        wins = []
+        for t0 in st:
+            if len(bad) and np.any((bad >= t0 - 1) & (bad < t0 + WIN_S + 1)):
+                continue
+            lo, hi = np.searchsorted(bt, [t0, t0 + WIN_S])
+            ks = bk[lo:hi]
+            if len(ks) < 3:
+                continue
+            pace = "P" in ks
+            pvc = 1.0 if "V" in ks else (-1.0 if pace else 0.0)
+            pac = 1.0 if "S" in ks else (-1.0 if (pace or "J" in ks) else 0.0)
+            tv = 1.0 if ov(rv, t0) else (-1.0 if pace else 0.0)
+            tsv = 1.0 if ov(rs, t0) else (-1.0 if (pace or "J" in ks) else 0.0)
+            wins.append((float(t0 - c0), [cfg["fa"], cfg["fa"], pvc, pac], [tv, tsv, 0.0, -1.0]))
+        if not wins:
+            continue
+        a, b = int(c0 * fs0), int(min(hdr.sig_len, (c0 + CH + WIN_S + 5) * fs0))
+        sig = wfdb.rdrecord(path, sampfrom=a, sampto=b).p_signal
+        out += TB.cut(db, rec, split, sig, fs0, slots, wins, toff=c0)
+    return out
+
+
+for _db in CFG2:
+    TB.GROUPS["n_" + _db] = (items_beats(_db), job_beats)
+
+
+# ---------------------------------------------------------------- IRIDIA-AF (Holter 2 canales, solo FA)
+def items_iridia():
+    d = B2 / "iridia-af"
+    pat = {}
+    for r in csv.DictReader(open(d / "iridia-af-metadata-v1.0.1.csv")):
+        pat[r["record_id"]] = r["patient_id"]
+    sp = B.split_of(sorted(set(pat.values())))
+    out = []
+    for rec in sorted(pat):
+        rd = d / "iridia-af-records-v1.0.1" / rec
+        if rd.is_dir():
+            out.append({"dir": str(rd), "rec": rec, "split": sp[pat[rec]]})
+    return out
+
+
+def job_iridia(item):
+    import h5py
+    rd, rec, split = item["dir"], item["rec"], item["split"]
+    fs0 = 200.0
+    eps = {}
+    for r in csv.DictReader(open(f"{rd}/{rec}_ecg_labels.csv")):
+        a, b = int(r["start_file_index"]), int(r["end_file_index"])
+        s, e = int(r["start_qrs_index"]) / fs0, int(r["end_qrs_index"]) / fs0
+        for f in range(a, b + 1):
+            eps.setdefault(f, []).append((s if f == a else 0.0, e if f == b else 1e12))
+    rng = np.random.default_rng(zlib.crc32(rec.encode()))
+    out = []
+    files = sorted(glob.glob(f"{rd}/{rec}_ecg_*.h5"))
+    for fi, fp in enumerate(files):
+        with h5py.File(fp, "r") as h:
+            key = "ecg" if "ecg" in h else list(h.keys())[0]
+            ds = h[key]
+            n_sec = ds.shape[0] / fs0
+            ev = eps.get(fi, [])
+
+            def frac(t0):
+                return sum(max(0.0, min(e, t0 + WIN_S) - max(s, t0)) for s, e in ev) / WIN_S
+            pos, neg = [], []
+            cand = set(range(30, int(n_sec - WIN_S - 30), 120))
+            for s, e in ev:  # inicios y finales de episodio: ventanas justo antes y despues
+                for t in (s - 25, s - 12, s + 2, s + 15, e - 25, e - 12, e + 2, e + 15):
+                    if 30 <= t < n_sec - WIN_S - 30:
+                        cand.add(int(t))
+            for t0 in cand:
+                f = frac(t0)
+                if f >= 0.999:
+                    pos.append(t0)
+                elif f <= 0.001:
+                    neg.append(t0)
+            cap = max(40, 240 // max(1, len(files)))
+            if len(pos) > cap:
+                pos = list(rng.choice(pos, cap, replace=False))
+            if len(neg) > cap:
+                neg = list(rng.choice(neg, cap, replace=False))
+            for t0, fa in sorted([(t, 1.0) for t in pos] + [(t, 0.0) for t in neg]):
+                a = int((t0 - 2) * fs0)
+                sig = np.asarray(ds[a:a + int((WIN_S + 4) * fs0)], dtype=np.float64)
+                if sig.ndim == 1:
+                    sig = sig[:, None]
+                slots = [0, 1, -1] if sig.shape[1] >= 2 else [0, -1, -1]
+                out += TB.cut("iridia", rec, split, sig, fs0, slots,
+                              [(2.0, [fa, -1, -1, -1], [-1, -1, 0, -1])], toff=fi * 100000.0 + t0 - 2.0)
+    return out
+
+
+TB.GROUPS["n_iridia"] = (items_iridia, job_iridia)
