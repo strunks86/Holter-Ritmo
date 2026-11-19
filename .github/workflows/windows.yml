@@ -49,6 +49,12 @@ jobs:
         run: |
           holterlocal\node\node.exe pruebas\motor.js holterlocal\ejemplo\00.hea
 
+      - name: Compilar el exportador de HScribe (x86)
+        shell: pwsh
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe" /nologo /platform:x86 /optimize /out:holterlocal\hscribe\export180.exe holterlocal\hscribe\export180.cs
+          if ($LASTEXITCODE -ne 0) { throw 'no compiló export180' }
+
       - name: Armar el .exe
         run: pyinstaller --noconfirm --distpath dist --workpath build empaquetado/HolterLocal.spec
 

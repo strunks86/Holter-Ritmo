@@ -97,7 +97,15 @@ class Export
             long blockEnd = Math.Min(t + STEP_MS, endLimit);
             for (int i = 0; i < 512; i += 8) Marshal.WriteInt64(list, i, 0);
             int n = 0;
-            int ok = wave(self, (int)t, (int)blockEnd, SPS, 1.0, list);
+            int ok;
+            try { ok = wave(self, (int)t, (int)blockEnd, SPS, 1.0, list); }
+            catch (Exception e)
+            {
+                // Algunas versiones de la DLL se caen (división por cero) al pedir señal pasado el final.
+                Console.WriteLine("la DLL falló en t=" + t + " ms: " + e.GetType().Name);
+                if (t >= (long)summaryMs - 60000 || totalSamples > 0) break;
+                throw;
+            }
             if (ok != 0) { Console.WriteLine("fallo en t=" + t + " rc=" + ok); zeroBlocks++; }
             else
             {
