@@ -29,6 +29,27 @@ EVENT_NAMES = [
 ]
 EVENT_LABEL = dict(EVENT_NAMES)
 
+# eventos propios de holterai (los de ectopia, FA y pausas salen del recuento común)
+HA_LABEL = {
+    'av_block_1': 'Bloqueo AV de primer grado', 'av_block_mobitz1': 'Bloqueo AV 2.º grado Mobitz I',
+    'av_block_mobitz2': 'Bloqueo AV 2.º grado Mobitz II', 'av_block_2to1': 'Bloqueo AV 2:1',
+    'av_block_advanced': 'Bloqueo AV avanzado', 'av_block_complete': 'Bloqueo AV completo',
+    'av_isorritmica': 'Disociación AV isorrítmica', 'asystole': 'Asistolia', 'flutter': 'Flutter auricular (a revisión)',
+    'ritmo_union_acelerado': 'Ritmo de la unión acelerado', 'parasistolia': 'Parasistolia', 'multiforme': 'Ventriculares multiformes',
+    'pacing_fusion': 'Marcapasos: fusión', 'pacing_failure': 'Marcapasos: fallo de captura', 'pacing_sensing': 'Marcapasos: fallo de sensado',
+    'no_organized': 'Ritmo no organizado (FV, a revisión)', 'no_signal': 'Sin señal (holterai)', 'escape': 'Latidos de escape',
+    'st_depression': 'Descenso del ST (holterai)', 'st_elevation': 'Elevación del ST (holterai)',
+}
+HA_REPETIDOS = {'afib', 'pause', 'tachy', 'brady', 'svt', 'vt_run', 'bigeminy', 'trigeminy', 'r_sobre_t', 'couplet'}
+
+
+def etiqueta_ha(kind):
+    if kind in HA_LABEL:
+        return HA_LABEL[kind]
+    if kind.startswith('bsa'):
+        return 'Bloqueo sinoauricular' + (' ' + kind[4:].replace('_', ' ') if len(kind) > 4 else '')
+    return kind.replace('_', ' ').capitalize()
+
 
 def recurso(*partes):
     """Ruta a un archivo que viaja con la aplicación (también dentro del .exe)."""
@@ -88,7 +109,16 @@ class Examen:
         self.excl = leer_arreglo(f['excl'])
         self.qual = [leer_arreglo(f['qual%d' % i]) for i in range(A['nch'])]
         self.chans = A['chans']
-        self.eventos = A['events']
+        self.eventos = list(A['events'])
+        ha = getattr(self, 'ha', None)
+        if ha:
+            for e in ha['events']:
+                if e['kind'] in HA_REPETIDOS:
+                    continue
+                self.eventos.append({'type': 'ha_' + e['kind'], 'label': etiqueta_ha(e['kind']), 't0': e['start_s'], 't1': e['end_s'],
+                                     'dur': max(0.0, e['end_s'] - e['start_s']), 'n': e.get('n', 0), 'b0': -1,
+                                     'detail': e.get('detail', ''), 'severity': e.get('severity', 'info')})
+            self.eventos.sort(key=lambda e: e['t0'])
 
     # ---- utilidades
     def mv(self, ch, i0, i1):

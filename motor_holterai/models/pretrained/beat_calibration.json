@@ -1,0 +1,32 @@
+{
+  "schema": "holterai/beat_calibration/1",
+  "classes": ["N", "S", "V", "F", "Q"],
+  "enabled": true,
+  "temperature": 0.8367,
+  "train_prior": [0.83253, 0.017297, 0.076882, 0.000001, 0.073291],
+  "target_prior": [0.985, 0.008, 0.007, 0.000001, 0.0005],
+  "max_prob": 0.45,
+  "margin": 0.1,
+  "noise_thr": 0.2,
+  "fit": {
+    "method": "escalado de temperatura por NLL (búsqueda dorada) + corrección de prevalencia por logits",
+    "temperature_dataset": "MIT-BIH DS1 (22 registros, 50585 latidos, jitter 0)",
+    "temperature_nll_before": 0.0655,
+    "temperature_nll_after": 0.0628,
+    "prior_dataset": "MIT-BIH DS1 + 4000 latidos Q sinteticos (como el entrenamiento de beat_cnn)",
+    "target_prior_note": "Holter de poblacion general: N 0,985 / S 0,008 / V 0,007. F queda igual que en el entrenamiento (no se predice: logit fijado en -10) y Q se mantiene en 5e-4."
+  },
+  "validation": {
+    "dataset": "MIT-BIH DS2 (22 registros, 49712 latidos, jitter 0)",
+    "ece_raw": 0.0236,
+    "ece_temperature": 0.0246,
+    "ece_calibrated": 0.0375,
+    "ece_mean_by_record_raw": 0.0617,
+    "ece_mean_by_record_temperature": 0.0528,
+    "ece_mean_by_record_calibrated": 0.047,
+    "ece_median_by_record_calibrated": 0.0095,
+    "accuracy_ds2": 0.9445,
+    "note": "ECE con 10 casillas; 'calibrated' = temperatura + prevalencia. El ECE global empeora al imponer la prevalencia Holter en MIT-BIH (V real 7 %, objetivo 0,7 %), pero la media por paciente baja de 0,062 a 0,047. El registro 232 (no visto en entrenamiento) tiene exactitud 0,25 y ECE 0,74: es un fallo de morfologia, no de calibracion."
+  },
+  "abstention_note": "max_prob/margin/noise_thr marcan Q solo en la ectopia propuesta (S/V/F); una N dudosa sigue siendo N. El umbral historico de confianza 0,32 se mantiene ademas de estos."
+}

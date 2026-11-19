@@ -1,0 +1,28 @@
+# Criterios AHA/ACCF/HRS 2009 (parte III) de bloqueo de rama y preexcitación.
+# Fuente: tratados/CRITERIOS-TRATADOS.md, sección H (T128). Los umbrales salen de
+# ese documento; las definiciones "operativas" de forma están marcadas abajo.
+# Sin entrenamiento: solo reglas y umbrales. Lo lee qrs_morph.load_aha_rules().
+# Derivaciones: precordial derecha = V1 (o V2); lateral = V5/V6 (o I/aVL). El H3+
+# trae un canal de cada tipo; la posición la declara el llamador (roles).
+
+# --- duración del QRS (ms) ----------------------------------------------------
+qrs_complete_ms: 120        # bloqueo completo: QRS >= 120 ms
+qrs_incomplete_ms: 110      # bloqueo incompleto: 110-119 ms
+tciv_min_ms: 110            # TCIV inespecífico: > 110 ms sin criterios de rama
+
+# --- bloqueo de rama derecha (BRD) -------------------------------------------
+v1_broad_r_peak_ms: 50      # V1 sin rsR'/rSR': R ancha con pico de R > 50 ms
+lateral_s_ms: 40            # lateral (V5/V6): S final > 40 ms ...
+lateral_s_longer_than_r: true  # ... o S final más larga que la R
+
+# --- bloqueo de rama izquierda (BRI) ------------------------------------------
+lateral_r_peak_ms: 60       # lateral: pico de R > 60 ms (completo e incompleto)
+
+# --- preexcitación ------------------------------------------------------------
+pr_short_ms: 120            # PR < 120 ms (exige onda P medida)
+delta_qrs_min_ms: 120       # QRS > 120 ms con onda delta
+
+# --- operativo (no es un umbral del tratado) ---------------------------------
+# q en la lateral: negatividad antes del pico de R mayor que esta fracción de la
+# amplitud del QRS. Sin q no hay definición en el tratado; se fija aquí.
+q_amp_frac: 0.10

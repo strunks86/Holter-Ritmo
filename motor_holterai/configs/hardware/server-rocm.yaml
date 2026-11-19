@@ -1,0 +1,4 @@
+device: rocm
+batch_size: 64
+precision: float32
+num_workers: 8

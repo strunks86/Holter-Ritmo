@@ -119,9 +119,9 @@ class VistaEventos(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         lay = QVBoxLayout(self); lay.setContentsMargins(6, 6, 6, 6)
-        self.arbol = QTreeWidget(); self.arbol.setHeaderLabels(['Evento', 'Hora', 'Latidos', 'FC (lpm)', 'Duración'])
+        self.arbol = QTreeWidget(); self.arbol.setHeaderLabels(['Evento', 'Hora', 'Latidos', 'FC (lpm)', 'Duración', 'Detalle'])
         self.arbol.setAlternatingRowColors(True); self.arbol.setUniformRowHeights(True)
-        self.arbol.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.arbol.header().setSectionResizeMode(5, QHeaderView.Stretch); self.arbol.setColumnWidth(0, 300)
         lay.addWidget(self.arbol)
         self.arbol.itemClicked.connect(self._clic)
         self.arbol.currentItemChanged.connect(lambda it, _: self._clic(it))
@@ -131,7 +131,11 @@ class VistaEventos(QWidget):
         by = {}
         for e in ex.eventos:
             by.setdefault(e['type'], []).append(e)
-        for k, nombre in EVENT_NAMES + [(k, k) for k in by if k not in EVENT_LABEL]:
+        extra = []
+        for k, evs in by.items():
+            if k not in EVENT_LABEL:
+                extra.append((k, evs[0].get('label', k)))
+        for k, nombre in EVENT_NAMES[:-2] + sorted(extra, key=lambda x: x[1]) + EVENT_NAMES[-2:]:
             evs = by.get(k)
             if not evs:
                 continue
@@ -140,8 +144,10 @@ class VistaEventos(QWidget):
             hijos = []
             for e in evs[:5000]:
                 it = QTreeWidgetItem([nombre, ex.reloj(e['t0']), fmt(e.get('n')) if e.get('n') else '',
-                                      fmt(e.get('rate')) if e.get('rate') else '', dur_txt(e.get('dur') or (e['t1'] - e['t0']))])
-                it.setData(0, Qt.UserRole, (float(e['t0']), int(e.get('b0', -1)) if e.get('n') else -1))
+                                      fmt(e.get('rate')) if e.get('rate') else '', dur_txt(e.get('dur') or (e['t1'] - e['t0'])), e.get('detail', '')])
+                if e.get('severity') == 'critical':
+                    it.setForeground(0, QColor('#c81e1e'))
+                it.setData(0, Qt.UserRole, (float(e['t0']), int(e.get('b0', -1)) if e.get('n') and e.get('b0', -1) >= 0 else -1))
                 hijos.append(it)
             top.addChildren(hijos)
             self.arbol.addTopLevelItem(top)

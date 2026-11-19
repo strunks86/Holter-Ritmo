@@ -63,6 +63,29 @@ const H = {
     let refOut = null; if (ref) { const keep = []; const sym = []; for (let i = 0; i < ref.sample.length; i++) if (E.isBeatSym(ref.sym[i])) { keep.push(ref.sample[i] / rec.fs); sym.push(ref.sym[i]); } refOut = { file: ref.file, t: keep, sym: sym.join('') }; }
     return { rec: { name: rec.name, source: rec.source, fs: rec.fs, n: rec.n, nsig: rec.nsig, gain: rec.gain, baseline: rec.baseline, names: rec.names, start: rec.start, sig }, ref: refOut, A: summaryOut() };
   },
+  /* Latidos y FA de otro motor (holterai): reemplazan a los propios; morfología, calidad, ST y QT
+     se heredan del latido propio más cercano (±80 ms). */
+  applyExt(m) {
+    const tb = fs.readFileSync(m.t), cb = fs.readFileSync(m.cls);
+    const tExt = new Float64Array(tb.buffer.slice(tb.byteOffset, tb.byteOffset + tb.byteLength));
+    const cExt = new Uint8Array(cb.buffer.slice(cb.byteOffset, cb.byteOffset + cb.byteLength));
+    const O = A.beats, nb = tExt.length, nch = O.st.length;
+    const nB = { n: nb, t: new Float64Array(nb), samp: new Int32Array(nb), cls: new Uint8Array(nb), auto: new Uint8Array(nb), conf: new Float32Array(nb),
+      pV: new Float32Array(nb), pS: new Float32Array(nb), pX: new Float32Array(nb), tid: new Int32Array(nb).fill(-1), tcorr: new Float32Array(nb),
+      X: O.X, st: O.st.map(() => new Int16Array(nb).fill(-32768)), edited: new Uint8Array(nb) };
+    let j = 0, matched = 0;
+    for (let b = 0; b < nb; b++) {
+      const t = tExt[b]; nB.t[b] = t; nB.samp[b] = Math.round(t * A.fs); nB.cls[b] = cExt[b]; nB.auto[b] = cExt[b]; nB.conf[b] = 1;
+      while (j + 1 < O.n && Math.abs(O.t[j + 1] - t) <= Math.abs(O.t[j] - t)) j++;
+      if (O.n && Math.abs(O.t[j] - t) <= 0.08) {
+        matched++; nB.pV[b] = O.pV[j]; nB.pS[b] = O.pS[j]; nB.pX[b] = O.pX[j]; nB.tid[b] = O.tid[j]; nB.tcorr[b] = O.tcorr[j];
+        for (let c = 0; c < nch; c++) nB.st[c][b] = O.st[c][j];
+      }
+    }
+    A.beats = nB; A.extMotor = m.motor || 'externo';
+    if (m.af) A.afManual = [[0, A.dur + 1, 0]].concat(m.af.map(e => [e[0], e[1], 1]));
+    const R = summaryOut(); R.extMatched = matched; return { A: R };
+  },
   relabel(m) { const B = A.beats; for (const b of m.beats) { if (b >= 0 && b < B.n) { B.cls[b] = m.cls; B.edited[b] = 1; } } return { A: summaryOut() }; },
   relabelTemplate(m) { const B = A.beats; for (let b = 0; b < B.n; b++) if (B.tid[b] === m.tid) { B.cls[b] = m.cls; B.edited[b] = 1; } return { A: summaryOut() }; },
   resetEdits() { const B = A.beats; B.edited.fill(0); return { A: summaryOut() }; },

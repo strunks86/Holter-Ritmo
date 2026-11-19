@@ -1,0 +1,35 @@
+# Valores por defecto. En producción se leen por examen desde ExamSettings.xml.
+sv_prematurity_pct: 25.0
+pause_ms: 2000
+pause_scope: all_beats
+# ST es una medición exploratoria: punto de medición J+60/J+80 ms y umbrales.
+st_depression_uv: 100
+st_elevation_uv: 200
+st_j_ms: 60
+st_min_duration_s: 60
+tachycardia_bpm: 120
+bradycardia_bpm: 50
+min_tachy_brady_duration_s: 180
+vt_bpm: 100
+vt_min_beats: 3
+svt_bpm: 100
+svt_min_beats: 3
+af_auto_detect: true
+hr_scope: all_beats
+exclude_pause_from_hr: false
+pacemaker_analysis: false
+pacemaker_rate_bpm: 60
+qtc_formulas:
+  - bazett
+  - fridericia
+  - framingham
+  - hodges
+# Fórmula indicada en el informe y en la interfaz (exploratorio).
+qtc_formula: bazett
+# Ventanas día/noche para la HRV, en hora local (extremo final excluido).
+# Los latidos de las horas intermedias (p. ej. 20–23) no cuentan en ninguna.
+day_window_start_h: 8
+day_window_end_h: 20
+night_window_start_h: 23
+night_window_end_h: 7
+source: hscribe_default

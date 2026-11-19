@@ -1,0 +1,35 @@
+# Carga de ESV y EV según la práctica chilena (T120).
+# Fuente: /root/holter/tratados/CRITERIOS-TRATADOS.md, sección B
+# (Pacheco, Bittner y cols., Rev Chil Cardiol 2022;41:190-7).
+# Solo reglas y umbrales: no se entrena nada.
+#
+# Las categorías ESV usan ESV/24 h y las EV usan EV/24 h, EV/h y % EV, todas
+# normalizadas por horas analizables (las horas no analizables no cuentan).
+
+esv:
+  # Categorías por ESV/24 h: escasa < escasa_menor_que; ocasional < frecuente_desde;
+  # frecuente < muy_frecuente_desde; muy frecuente >= muy_frecuente_desde.
+  escasa_menor_que: 10
+  frecuente_desde: 100
+  muy_frecuente_desde: 500
+  # Carga excesiva si se cumple cualquiera de estas tres condiciones.
+  excesiva_hora_mayor_que: 30     # ESV/h máxima > 30
+  excesiva_24h_mayor_que: 218     # ESV/24 h > 218
+  excesiva_salva_desde: 20        # salva de >= 20 S seguidas
+
+ev:
+  # Escasa: EV/24 h < escasa_menor_que (y no cumple frecuente).
+  escasa_menor_que: 10
+  # Ocasional: EV/h < frecuente_h y % < frecuente_pct.
+  frecuente_h: 30                 # frecuente: EV/h >= 30 ...
+  frecuente_pct: 3                # ... o % EV >= 3
+  # Muy frecuente: EV/24 h >= muy_frecuente_24h o % EV >= muy_frecuente_pct.
+  muy_frecuente_24h: 10000
+  muy_frecuente_pct: 10
+
+horas:
+  # Decisión propia (no viene de los tratados): la ESV/h máxima solo se toma de
+  # horas de reloj con al menos este tiempo analizable (1800 s = 30 min).
+  hora_max_min_analizable_s: 1800
+
+source: carga_ectopia_chile_2022

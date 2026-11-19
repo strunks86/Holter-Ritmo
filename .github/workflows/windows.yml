@@ -52,14 +52,18 @@ jobs:
       - name: Armar el .exe
         run: pyinstaller --noconfirm --distpath dist --workpath build empaquetado/HolterLocal.spec
 
-      - name: Abrir el .exe y probarlo en Windows
+      - name: Abrir el .exe y probarlo en Windows (los dos motores)
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath dist\HolterLocal\HolterLocal.exe -ArgumentList '--autoprueba', "$PWD\autoprueba" -PassThru
-          if (-not $p.WaitForExit(1200000)) { $p.Kill(); throw 'La autoprueba no terminó en 20 minutos' }
-          Get-Content autoprueba\autoprueba.txt
-          if ($p.ExitCode -ne 0) { throw "La autoprueba falló (código $($p.ExitCode))" }
-          if (-not (Select-String -Path autoprueba\autoprueba.txt -Pattern '^OK$' -Quiet)) { throw 'La autoprueba no llegó al final' }
+          foreach ($m in 'estacion', 'holterai') {
+            $dir = "$PWD\autoprueba\$m"
+            $p = Start-Process -FilePath dist\HolterLocal\HolterLocal.exe -ArgumentList '--motor', $m, '--autoprueba', $dir -PassThru
+            if (-not $p.WaitForExit(1500000)) { $p.Kill(); throw "La autoprueba ($m) no terminó en 25 minutos" }
+            Get-Content "$dir\autoprueba.txt"
+            if ($p.ExitCode -ne 0) { throw "La autoprueba ($m) falló (código $($p.ExitCode))" }
+            if (-not (Select-String -Path "$dir\autoprueba.txt" -Pattern '^OK$' -Quiet)) { throw "La autoprueba ($m) no llegó al final" }
+          }
+          if (-not (Select-String -Path autoprueba\holterai\autoprueba.txt -Pattern 'motor: holterai' -Quiet)) { throw 'holterai no reemplazó al análisis rápido' }
 
       - name: Instalador
         shell: pwsh
@@ -83,7 +87,7 @@ jobs:
         if: always()
         with:
           name: autoprueba
-          path: autoprueba/*
+          path: autoprueba/**
           retention-days: 30
 
       - name: Publicar versión

@@ -1,0 +1,18 @@
+# Reglas de FA y flutter de los tratados (T125), sección E de
+# /root/holter/tratados/CRITERIOS-TRATADOS.md. Solo reglas y umbrales: no se entrena nada.
+# Lo lee holterai.legacy.app.signal.af.cargar_umbrales(); las claves desconocidas dan error.
+fa_tratados:
+  fa_min_s: 30.0          # episodio de FA solo si dura >= 30 s
+  salva_min_s: 5.0        # 5–30 s: se informa como salva S irregular
+  regular_cv_max: 0.06    # CV del RR < 0,06 ...
+  regular_min_rr: 10      # ... en >= 10 RR seguidos => FA con ritmo regular
+  pausa_post_s: 3.0       # pausa >= 3 s al terminar FA => post-conversión
+  pausa_post_tol_s: 10.0  # la pausa empieza a +-10 s del fin del episodio (el fin lo retrasa el suavizado)
+  pausa_fa_s: 5.0         # pausa >= 5 s dentro de FA => se informa
+  qrs_ancho_ms: 110.0     # QRS anormal en adultos (AHA 2009 III)
+  preex_rr_min_s: 0.25    # RR mínimo < 250 ms entre latidos anchos => preexcitación
+  preex_min_anchos: 5     # latidos anchos mínimos en el episodio
+  ashman_ratio_min: 1.4   # regla 6: RR previo largo / RR previo corto >= 1,4 (valor de partida, SIN calibrar)
+  pausa_comp_tol: 0.10    # pausa compensadora: RR previo + RR siguiente = 2 x RR mediano +-10 % (C9)
+  flutter_min_s: 30.0     # flutter a revisión sostenido: mismo mínimo que un episodio de FA
+  artefacto_frac: 0.5     # >= 50 % de latidos ilegibles (>= 2 de 3 canales) => no se informa

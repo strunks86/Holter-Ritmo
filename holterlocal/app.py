@@ -6,14 +6,17 @@ import sys
 import time
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QIcon, QKeySequence, QTextDocument
-from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow, QMessageBox, QProgressDialog,
+import json
+
+from PySide6.QtCore import QProcess, QSettings, Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QIcon, QKeySequence, QTextDocument
+from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow, QMessageBox, QProgressBar, QProgressDialog,
                                QSplitter, QTabWidget, QWidget)
 
 from . import __version__
 from .estilo import QSS
 from .motor import CLS_NAME, CLS_SYM, Examen, Motor, recurso
+from .resumen_ha import html_holterai
 from .tira import PanelECG
 from .vistas import (VistaCriterios, VistaEventos, VistaHistogramas, VistaPlantillas, VistaResumen, VistaTendencias,
                      VistaValidacion)
@@ -53,6 +56,8 @@ class Principal(QMainWindow):
         self.panel.tira.latido_elegido.connect(self._info_latido)
         self._menus()
         self.estado = QLabel('Listo.'); self.statusBar().addWidget(self.estado, 1)
+        self.barra = QProgressBar(); self.barra.setMaximumWidth(260); self.barra.setVisible(False); self.statusBar().addPermanentWidget(self.barra)
+        self.ha_proc = None; self.ha_timer = QTimer(self); self.ha_timer.timeout.connect(self._ha_poll)
         self.motor.iniciar()
 
     # ---- menús
@@ -67,6 +72,13 @@ class Principal(QMainWindow):
         self._acc(a, 'Exportar latidos en CSV…', self.exportar_csv)
         a.addSeparator()
         self._acc(a, 'Salir', self.close, QKeySequence.Quit)
+        m = mb.addMenu('&Motor')
+        g = QActionGroup(self); g.setExclusive(True)
+        actual = self.cfg.value('motor', 'holterai')
+        for clave, txt in (('holterai', 'holterai (último motor: latidos, FA, PR, bloqueos AV, ramas, marcapasos)'),
+                           ('estacion', 'Estación (rápido, solo el motor de la estación)')):
+            a = QAction(txt, self, checkable=True); a.setChecked(actual == clave); a.setData(clave); g.addAction(a); m.addAction(a)
+        g.triggered.connect(lambda a: self.cfg.setValue('motor', a.data()))
         e = mb.addMenu('&Edición')
         self._acc(e, 'Deshacer todas mis correcciones', self.deshacer_todo)
         h = mb.addMenu('A&yuda')
@@ -126,13 +138,84 @@ class Principal(QMainWindow):
             self._error(str(e)); return
         if self.dlg:
             self.dlg.close(); self.dlg = None
-        self.ex.A['motor'] = 'HolterLocal ' + (self.motor.version or '')
+        self._etiquetar_motor()
         self.setWindowTitle(f'HolterLocal — {self.ex.nombre}')
         self.panel.set_examen(self.ex)
         self.v_cr.cargar(self.ex.A.get('settings') or {})
         self.refrescar()
         self.tabs.setCurrentIndex(0)
         self.estado.setText(f'{self.ex.nombre}: {len(self.ex.t):,} latidos analizados en {time.time() - self.t_ini:.0f} s'.replace(',', '.'))
+        if self.cfg.value('motor', 'holterai') == 'holterai':
+            self.lanzar_holterai(r)
+
+    # ---- motor holterai en un proceso aparte
+    def lanzar_holterai(self, r):
+        rec = r['rec']; out = os.path.dirname(rec['sig'][0]['file'])
+        for f in ('progreso.jsonl', 'ha_fin.json'):
+            try:
+                os.remove(os.path.join(out, f))
+            except OSError:
+                pass
+        pet = {'out': out, 'sig': rec['sig'], 'gain': rec['gain'], 'baseline': rec['baseline'], 'names': rec['names'],
+               'fs': rec['fs'], 'chans': r['A']['chans'], 'modelo': 'actual'}
+        ruta = os.path.join(out, 'peticion_holterai.json')
+        with open(ruta, 'w', encoding='utf-8') as f:
+            json.dump(pet, f)
+        self.ha_out = out; self.ha_t0 = time.time(); self.ha_pos = 0
+        self.ha_proc = QProcess(self)
+        self.ha_proc.setProcessChannelMode(QProcess.ForwardedChannels)
+        if getattr(sys, 'frozen', False):
+            self.ha_proc.start(sys.executable, ['--motor-holterai', ruta])
+        else:
+            self.ha_proc.start(sys.executable, [os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'HolterLocal.py'), '--motor-holterai', ruta])
+        self.barra.setVisible(True); self.barra.setValue(0); self.barra.setFormat('holterai %p %')
+        self.estado.setText('Lo que ves es el análisis rápido. El motor holterai está trabajando y lo reemplazará al terminar…')
+        self.ha_timer.start(500)
+
+    def _ha_poll(self):
+        out = self.ha_out
+        try:
+            with open(os.path.join(out, 'progreso.jsonl'), encoding='utf-8') as f:
+                f.seek(self.ha_pos); data = f.read(); self.ha_pos = f.tell()
+            for line in data.splitlines():
+                m = json.loads(line); self.barra.setValue(int(100 * m['p']))
+                self.estado.setText(f'holterai: {m["msg"]}… ({time.time() - self.ha_t0:.0f} s)')
+        except (OSError, ValueError):
+            pass
+        fin = os.path.join(out, 'ha_fin.json')
+        if not os.path.isfile(fin):
+            if self.ha_proc and self.ha_proc.state() == QProcess.NotRunning and time.time() - self.ha_t0 > 5:
+                self.ha_timer.stop(); self.barra.setVisible(False); self.ha_proc = None
+                self.estado.setText('El motor holterai se cerró sin terminar; se muestra el análisis rápido.')
+            return
+        self.ha_timer.stop(); self.barra.setVisible(False); self.ha_proc = None
+        try:
+            with open(fin, encoding='utf-8') as f:
+                r = json.load(f)
+            if not r.get('ok'):
+                raise RuntimeError(r.get('error', 'error desconocido'))
+            with open(os.path.join(out, 'ha.json'), encoding='utf-8') as f:
+                ha = json.load(f)
+        except Exception as e:  # noqa: BLE001
+            self.estado.setText('holterai no pudo analizar este examen; se muestra el análisis rápido.')
+            QMessageBox.warning(self, 'HolterLocal', 'El motor holterai falló:\n\n' + str(e)); return
+        af = [[e['start_s'], e['end_s']] for e in ha['events'] if e['kind'] == 'afib']
+        self.motor.llamar('applyExt', lambda res: self._ha_listo(res, ha), self._error, t=os.path.join(out, 'ha_t.bin'),
+                          cls=os.path.join(out, 'ha_cls.bin'), af=af, motor='holterai')
+
+    def _ha_listo(self, res, ha):
+        self.ex.ha = ha
+        self._actualizado(res)
+        self.panel.tira.sel = -1
+        self.estado.setText(f'Análisis de holterai listo: {ha["n"]:,} latidos en {ha["elapsed"]:.0f} s'.replace(',', '.'))
+
+    def _etiquetar_motor(self):
+        ha = getattr(self.ex, 'ha', None)
+        if ha:
+            self.ex.A['motor'] = 'holterai (%s) con morfología y calidad de la estación %s' % (ha.get('modelo', 'actual'), self.motor.version or '')
+            self.ex.A['extra_html'] = html_holterai(ha, self.ex)
+        else:
+            self.ex.A['motor'] = 'estación ' + (self.motor.version or '')
 
     def refrescar(self):
         ex = self.ex
@@ -162,7 +245,7 @@ class Principal(QMainWindow):
     # ---- correcciones
     def _actualizado(self, r):
         sel = self.panel.tira.sel
-        self.ex.actualizar(r['A']); self.ex.A['motor'] = 'HolterLocal ' + (self.motor.version or '')
+        self.ex.actualizar(r['A']); self._etiquetar_motor()
         self.refrescar()
         if sel >= 0:
             self.panel.tira.sel = sel; self._info_latido(sel)
@@ -251,13 +334,14 @@ def autoprueba(win, carpeta, rutas):
 
     def tick():
         app = QApplication.instance()
-        if win.ex is None:
+        if win.ex is None or win.ha_proc is not None or (win.cfg.value('motor', 'holterai') == 'holterai' and not getattr(win.ex, 'ha', None) and time.time() - estado['t'] < 1500):
             if time.time() - estado['t'] > 1500:
                 escribir('FALLO: el análisis no terminó a tiempo'); app.exit(2)
             return
         p = estado['paso']; estado['paso'] += 1
         if p == 0:
             ex = win.ex
+            escribir(f'motor: {ex.A.get("motor")}')
             escribir(f'examen {ex.nombre}: {ex.dur / 3600:.2f} h, {ex.nsig} canales, {len(ex.t)} latidos, {len(ex.eventos)} eventos, '
                      f'{len(ex.A.get("templates", []))} morfologías, abierto en {time.time() - estado["t"]:.1f} s')
             c = ex.A['counts']; escribir('clases ' + ' '.join(f'{CLS_SYM[k]}={c[k]}' for k in range(10) if c[k]))
@@ -291,13 +375,17 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog='HolterLocal')
     ap.add_argument('examen', nargs='*')
     ap.add_argument('--autoprueba', metavar='CARPETA')
+    ap.add_argument('--motor', choices=['holterai', 'estacion'])
     a = ap.parse_args(argv)
     app = QApplication(sys.argv[:1])
     app.setApplicationName('HolterLocal'); app.setOrganizationName('HolterLocal')
     app.setStyle('Fusion'); app.setStyleSheet(QSS)
     if os.path.isfile(recurso('holterlocal.ico')):
         app.setWindowIcon(QIcon(recurso('holterlocal.ico')))
+    if a.motor:
+        QSettings('HolterLocal', 'HolterLocal').setValue('motor', a.motor)
     win = Principal()
+    app.aboutToQuit.connect(win.motor.cerrar)
     win.show()
     if a.autoprueba:
         rutas = a.examen or [recurso('ejemplo', '00.hea')]
