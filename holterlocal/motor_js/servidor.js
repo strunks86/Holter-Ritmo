@@ -86,6 +86,25 @@ const H = {
     if (m.af) A.afManual = [[0, A.dur + 1, 0]].concat(m.af.map(e => [e[0], e[1], 1]));
     const R = summaryOut(); R.extMatched = matched; return { A: R };
   },
+  /* Modo mixto: latidos, V y FA de la estación; holterai decide solo entre N y S en los latidos que la
+     estación llama normales o supraventriculares (±80 ms). */
+  applyMix(m) {
+    const tb = fs.readFileSync(m.t), cb = fs.readFileSync(m.cls);
+    const tExt = new Float64Array(tb.buffer.slice(tb.byteOffset, tb.byteOffset + tb.byteLength));
+    const cExt = new Uint8Array(cb.buffer.slice(cb.byteOffset, cb.byteOffset + cb.byteLength));
+    const O = A.beats; let j = 0, matched = 0, toS = 0, toN = 0;
+    for (let b = 0; b < O.n; b++) {
+      if (O.cls[b] > 1) continue;
+      const t = O.t[b];
+      while (j + 1 < tExt.length && Math.abs(tExt[j + 1] - t) <= Math.abs(tExt[j] - t)) j++;
+      if (!tExt.length || Math.abs(tExt[j] - t) > 0.08) continue;
+      matched++; const c = cExt[j] === 1 ? 1 : 0;
+      if (c !== O.auto[b]) { if (c) toS++; else toN++; }
+      O.auto[b] = c; if (!O.edited[b]) O.cls[b] = c;
+    }
+    A.extMotor = 'mixto'; A.extClasses = true;
+    const R = summaryOut(); R.extMatched = matched; R.mix = { toS, toN }; return { A: R };
+  },
   relabel(m) { const B = A.beats; for (const b of m.beats) { if (b >= 0 && b < B.n) { B.cls[b] = m.cls; B.edited[b] = 1; } } return { A: summaryOut() }; },
   relabelTemplate(m) { const B = A.beats; for (let b = 0; b < B.n; b++) if (B.tid[b] === m.tid) { B.cls[b] = m.cls; B.edited[b] = 1; } return { A: summaryOut() }; },
   resetEdits() { const B = A.beats; B.edited.fill(0); return { A: summaryOut() }; },

@@ -12,7 +12,7 @@ permissions:
 jobs:
   exe:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       NODE_VERSION: '22.12.0'
     steps:
@@ -55,7 +55,7 @@ jobs:
       - name: Abrir el .exe y probarlo en Windows (los dos motores)
         shell: pwsh
         run: |
-          foreach ($m in 'estacion', 'holterai') {
+          foreach ($m in 'estacion', 'holterai', 'mixto') {
             $dir = "$PWD\autoprueba\$m"
             $p = Start-Process -FilePath dist\HolterLocal\HolterLocal.exe -ArgumentList '--motor', $m, '--autoprueba', $dir -PassThru
             if (-not $p.WaitForExit(1500000)) { $p.Kill(); throw "La autoprueba ($m) no terminó en 25 minutos" }
@@ -64,6 +64,7 @@ jobs:
             if (-not (Select-String -Path "$dir\autoprueba.txt" -Pattern '^OK$' -Quiet)) { throw "La autoprueba ($m) no llegó al final" }
           }
           if (-not (Select-String -Path autoprueba\holterai\autoprueba.txt -Pattern 'motor: holterai' -Quiet)) { throw 'holterai no reemplazó al análisis rápido' }
+          if (-not (Select-String -Path autoprueba\mixto\autoprueba.txt -Pattern 'motor: mixto' -Quiet)) { throw 'el modo mixto no se aplicó' }
 
       - name: Instalador
         shell: pwsh

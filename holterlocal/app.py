@@ -74,8 +74,9 @@ class Principal(QMainWindow):
         self._acc(a, 'Salir', self.close, QKeySequence.Quit)
         m = mb.addMenu('&Motor')
         g = QActionGroup(self); g.setExclusive(True)
-        actual = self.cfg.value('motor', 'holterai')
-        for clave, txt in (('holterai', 'holterai (último motor: latidos, FA, PR, bloqueos AV, ramas, marcapasos)'),
+        actual = self.cfg.value('motor', 'mixto')
+        for clave, txt in (('mixto', 'Mixto (recomendado): latidos, V y FA de la estación; S, PR, AV, ramas y marcapasos de holterai'),
+                           ('holterai', 'Solo holterai (latidos, clases y FA de holterai)'),
                            ('estacion', 'Estación (rápido, solo el motor de la estación)')):
             a = QAction(txt, self, checkable=True); a.setChecked(actual == clave); a.setData(clave); g.addAction(a); m.addAction(a)
         g.triggered.connect(lambda a: self.cfg.setValue('motor', a.data()))
@@ -145,7 +146,7 @@ class Principal(QMainWindow):
         self.refrescar()
         self.tabs.setCurrentIndex(0)
         self.estado.setText(f'{self.ex.nombre}: {len(self.ex.t):,} latidos analizados en {time.time() - self.t_ini:.0f} s'.replace(',', '.'))
-        if self.cfg.value('motor', 'holterai') == 'holterai':
+        if self.cfg.value('motor', 'mixto') in ('mixto', 'holterai'):
             self.lanzar_holterai(r)
 
     # ---- motor holterai en un proceso aparte
@@ -200,7 +201,9 @@ class Principal(QMainWindow):
             self.estado.setText('holterai no pudo analizar este examen; se muestra el análisis rápido.')
             QMessageBox.warning(self, 'HolterLocal', 'El motor holterai falló:\n\n' + str(e)); return
         af = [[e['start_s'], e['end_s']] for e in ha['events'] if e['kind'] == 'afib']
-        self.motor.llamar('applyExt', lambda res: self._ha_listo(res, ha), self._error, t=os.path.join(out, 'ha_t.bin'),
+        orden = 'applyMix' if self.cfg.value('motor', 'mixto') == 'mixto' else 'applyExt'
+        self.ex.modo = 'mixto' if orden == 'applyMix' else 'holterai'
+        self.motor.llamar(orden, lambda res: self._ha_listo(res, ha), self._error, t=os.path.join(out, 'ha_t.bin'),
                           cls=os.path.join(out, 'ha_cls.bin'), af=af, motor='holterai')
 
     def _ha_listo(self, res, ha):
@@ -212,7 +215,10 @@ class Principal(QMainWindow):
     def _etiquetar_motor(self):
         ha = getattr(self.ex, 'ha', None)
         if ha:
-            self.ex.A['motor'] = 'holterai (%s) con morfología y calidad de la estación %s' % (ha.get('modelo', 'actual'), self.motor.version or '')
+            if getattr(self.ex, 'modo', '') == 'mixto':
+                self.ex.A['motor'] = 'mixto: estación %s (latidos, V, FA) + holterai %s (S, PR, AV, ramas, marcapasos)' % (self.motor.version or '', ha.get('modelo', 'actual'))
+            else:
+                self.ex.A['motor'] = 'holterai (%s) con morfología y calidad de la estación %s' % (ha.get('modelo', 'actual'), self.motor.version or '')
             self.ex.A['extra_html'] = html_holterai(ha, self.ex)
         else:
             self.ex.A['motor'] = 'estación ' + (self.motor.version or '')
@@ -334,7 +340,7 @@ def autoprueba(win, carpeta, rutas):
 
     def tick():
         app = QApplication.instance()
-        if win.ex is None or win.ha_proc is not None or (win.cfg.value('motor', 'holterai') == 'holterai' and not getattr(win.ex, 'ha', None) and time.time() - estado['t'] < 1500):
+        if win.ex is None or win.ha_proc is not None or (win.cfg.value('motor', 'mixto') in ('mixto', 'holterai') and not getattr(win.ex, 'ha', None) and time.time() - estado['t'] < 1500):
             if time.time() - estado['t'] > 1500:
                 escribir('FALLO: el análisis no terminó a tiempo'); app.exit(2)
             return
@@ -375,7 +381,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog='HolterLocal')
     ap.add_argument('examen', nargs='*')
     ap.add_argument('--autoprueba', metavar='CARPETA')
-    ap.add_argument('--motor', choices=['holterai', 'estacion'])
+    ap.add_argument('--motor', choices=['mixto', 'holterai', 'estacion'])
     a = ap.parse_args(argv)
     app = QApplication(sys.argv[:1])
     app.setApplicationName('HolterLocal'); app.setOrganizationName('HolterLocal')
