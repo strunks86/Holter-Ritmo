@@ -1,0 +1,93 @@
+name: Windows (.exe)
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  exe:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      NODE_VERSION: '22.12.0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Dependencias de Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller==6.11.1
+
+      - name: Node portátil para el motor
+        shell: pwsh
+        run: |
+          $u = "https://nodejs.org/dist/v$env:NODE_VERSION/node-v$env:NODE_VERSION-win-x64.zip"
+          Invoke-WebRequest $u -OutFile node.zip
+          Expand-Archive node.zip -DestinationPath nodetmp
+          New-Item -ItemType Directory -Force holterlocal/node | Out-Null
+          Copy-Item "nodetmp/node-v$env:NODE_VERSION-win-x64/node.exe" holterlocal/node/
+          Copy-Item "nodetmp/node-v$env:NODE_VERSION-win-x64/LICENSE" holterlocal/node/LICENSE-node.txt
+
+      - name: Holter de ejemplo (PhysioNet LTAFDB 00, licencia ODC-By)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force holterlocal/ejemplo | Out-Null
+          foreach ($e in 'hea','dat','atr') {
+            Invoke-WebRequest "https://physionet-open.s3.amazonaws.com/ltafdb/1.0.0/00.$e" -OutFile "holterlocal/ejemplo/00.$e"
+          }
+
+      - name: Pruebas del motor
+        run: |
+          holterlocal\node\node.exe pruebas\motor.js holterlocal\ejemplo\00.hea
+
+      - name: Armar el .exe
+        run: pyinstaller --noconfirm --distpath dist --workpath build empaquetado/HolterLocal.spec
+
+      - name: Abrir el .exe y probarlo en Windows
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\HolterLocal\HolterLocal.exe -ArgumentList '--autoprueba', "$PWD\autoprueba" -PassThru
+          if (-not $p.WaitForExit(1200000)) { $p.Kill(); throw 'La autoprueba no terminó en 20 minutos' }
+          Get-Content autoprueba\autoprueba.txt
+          if ($p.ExitCode -ne 0) { throw "La autoprueba falló (código $($p.ExitCode))" }
+          if (-not (Select-String -Path autoprueba\autoprueba.txt -Pattern '^OK$' -Quiet)) { throw 'La autoprueba no llegó al final' }
+
+      - name: Instalador
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path holterlocal\__init__.py -Pattern "'(.+)'").Matches[0].Groups[1].Value
+          $env:HL_VERSION = $v
+          New-Item -ItemType Directory -Force salida | Out-Null
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc empaquetado\instalador.iss
+          Compress-Archive -Path dist\HolterLocal -DestinationPath "salida\HolterLocal-$v-portable.zip"
+          Get-ChildItem salida
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HolterLocal-Windows
+          path: salida/*
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: autoprueba
+          path: autoprueba/*
+          retention-days: 30
+
+      - name: Publicar versión
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: salida/*
