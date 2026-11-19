@@ -44,7 +44,7 @@ def load_sources7(tags):
 def y7(src, j):
     y = np.empty(7, np.float32)
     y[:4] = src.Y[j]
-    y[4] = 0.0
+    y[4] = src.TQ[j, 3] if src.TQ.shape[1] > 3 else 0.0  # RUIDO real (bases con calidad anotada)
     y[5:] = src.TQ[j, :2]
     if y[1] == 1.0:
         y[0] = -1.0
@@ -78,18 +78,18 @@ class DS7(Dataset):
         y = y7(self.srcs[s], j)
         if self.modo == "valrob":
             x = perturbar(x, np.random.default_rng(self.seed * 7_000_003 + i), p_drop=0.0)
-            if i % 2 == 1:
+            if i % 2 == 1 and y[4] == 0.0:
                 x, y = ruido.mezclar(x, y, R.banco()["test"], np.random.default_rng(self.seed * 1_000_003 + i))
         if self.modo == "train":
             rng = np.random.default_rng()
             if self.rob and rng.random() < self.rob:
                 x = perturbar(x, rng)
-            u = rng.random()
+            u = rng.random() if y[4] == 0.0 else 1.0  # no mezclar ruido sobre ruido real
             if u < self.p_puro:
                 x, y = ruido.mezclar(x, y, R.banco()["train"], rng, puro=True)
             elif u < self.p_puro + self.p_aug:
                 x, y = ruido.mezclar(x, y, R.banco()["train"], rng)
-        elif self.modo == "val" and i % 2 == 1:
+        elif self.modo == "val" and i % 2 == 1 and y[4] == 0.0:
             rng = np.random.default_rng(self.seed * 1_000_003 + i)
             x, y = ruido.mezclar(x, y, R.banco()["test"], rng)
         return torch.from_numpy(x), torch.from_numpy(y)
@@ -224,6 +224,9 @@ def main():
             else:
                 sin_mejora += 1
                 log(f"  sin mejora ({sin_mejora}/{args.paciencia})")
+        else:  # el punto de partida cuenta como mejor: una fase nunca guarda algo peor que su inicio
+            best = mv
+            torch.save(ck, out / "best.pt")
         (out / "hist.json").write_text(json.dumps(hist, indent=1), encoding="utf-8")
 
     evaluar(0)
