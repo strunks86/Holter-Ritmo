@@ -82,7 +82,7 @@ const H = {
         for (let c = 0; c < nch; c++) nB.st[c][b] = O.st[c][j];
       }
     }
-    A.beats = nB; A.extMotor = m.motor || 'externo';
+    A.beats = nB; A.extMotor = m.motor || 'externo'; A.extClasses = true;
     if (m.af) A.afManual = [[0, A.dur + 1, 0]].concat(m.af.map(e => [e[0], e[1], 1]));
     const R = summaryOut(); R.extMatched = matched; return { A: R };
   },

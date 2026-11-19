@@ -1021,7 +1021,7 @@ E.summarize = function (A, S0) {
   const prem = new Float32Array(nb).fill(NaN); let runRef = NaN;
   for (let b = 0; b < nb; b++) {
     if (rr[b] === rr[b] && rrRef[b] === rrRef[b]) prem[b] = 1 - rr[b] / rrRef[b];
-    if (B.edited[b] || cls[b] !== 0) { if (cls[b] !== 1) runRef = NaN; continue; }
+    if (A.extClasses || B.edited[b] || cls[b] !== 0) { if (cls[b] !== 1) runRef = NaN; continue; } // con otro motor sus S se respetan
     if (afBeat[b]) { runRef = NaN; continue; }
     const pb = prevIdx[b]; if (pb < 0 || vent(cls[pb])) { runRef = NaN; continue; }
     if (prem[b] >= S.svPrematurity) { cls[b] = 1; if (!(runRef === runRef)) runRef = rrRef[b]; }
