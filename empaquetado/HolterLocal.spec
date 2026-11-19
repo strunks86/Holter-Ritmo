@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_submodules
 raiz = os.path.abspath(os.path.join(SPECPATH, '..'))
 datos = [(os.path.join(raiz, 'holterlocal', 'motor_js'), 'motor_js'), (os.path.join(raiz, 'holterlocal', 'holterlocal.ico'), '.')]
 datos.append((os.path.join(raiz, 'motor_holterai'), 'motor_holterai'))
+datos.append((os.path.join(raiz, 'holterlocal', 'hscribe'), 'hscribe'))
 for carpeta in ('node', 'ejemplo'):
     p = os.path.join(raiz, 'holterlocal', carpeta)
     if os.path.isdir(p):

@@ -21,6 +21,13 @@ from .tira import PanelECG
 from .vistas import (VistaCriterios, VistaEventos, VistaHistogramas, VistaPlantillas, VistaResumen, VistaTendencias,
                      VistaValidacion)
 
+def es_hscribe(p):
+    d = p if os.path.isdir(p) else os.path.dirname(p)
+    if not os.path.isfile(os.path.join(d, 'Samples.dat')):
+        return False
+    return os.path.isdir(p) or not (p.lower().endswith('.hea') or os.path.isfile(os.path.splitext(p)[0] + '.hea'))
+
+
 FILTRO = ('Exámenes Holter (*.hea *.dat *.edf *.bdf *.ecg *.ish *.isn *.txt *.csv);;'
           'WFDB de PhysioNet (*.hea);;EDF o BDF (*.edf *.bdf);;ISHNE (*.ecg *.ish *.isn);;Todos los archivos (*)')
 
@@ -65,6 +72,7 @@ class Principal(QMainWindow):
         mb = self.menuBar()
         a = mb.addMenu('&Archivo')
         self._acc(a, 'Abrir examen…', self.abrir, QKeySequence.Open)
+        self._acc(a, 'Abrir carpeta de examen HScribe…', self.abrir_hscribe)
         self._acc(a, 'Abrir horas crudas de Mortara (H12+)…', self.abrir_horas)
         self._acc(a, 'Abrir el Holter de ejemplo (21 h, PhysioNet)', self.abrir_ejemplo)
         a.addSeparator()
@@ -97,7 +105,70 @@ class Principal(QMainWindow):
         d = self.cfg.value('carpeta', os.path.expanduser('~'))
         p, _ = QFileDialog.getOpenFileName(self, 'Abrir examen Holter', d, FILTRO)
         if p:
-            self.cfg.setValue('carpeta', os.path.dirname(p)); self.cargar([p])
+            self.cfg.setValue('carpeta', os.path.dirname(p))
+            if es_hscribe(p):
+                self.importar_hscribe(os.path.dirname(p)); return
+            self.cargar([p])
+
+    # ---- examen nativo de HScribe (carpeta con Samples.dat): se exporta con la DLL del propio HScribe
+    def abrir_hscribe(self):
+        d = QFileDialog.getExistingDirectory(self, 'Elige la carpeta del examen (la que tiene Samples.dat)', self.cfg.value('carpeta', os.path.expanduser('~')))
+        if not d:
+            return
+        if not es_hscribe(d):
+            QMessageBox.information(self, 'HolterLocal', 'En esa carpeta no está Samples.dat de HScribe.'); return
+        self.cfg.setValue('carpeta', d); self.importar_hscribe(d)
+
+    def _dll_hscribe(self, d):
+        cands = []
+        a = os.path.abspath(d)
+        while True:
+            if os.path.basename(a).lower() == 'modalitymgr':
+                cands.append(os.path.join(a, 'Modalities', 'HScribe'))
+            cands.append(os.path.join(a, 'ModalityMgr', 'Modalities', 'HScribe'))
+            b = os.path.dirname(a)
+            if b == a:
+                break
+            a = b
+        guardada = self.cfg.value('dll_hscribe', '')
+        if guardada:
+            cands.insert(0, guardada)
+        for pf in (os.environ.get('ProgramFiles(x86)', ''), os.environ.get('ProgramFiles', '')):
+            if pf:
+                cands.append(os.path.join(pf, 'Mortara Instrument Inc', 'ModalityMgr', 'Modalities', 'HScribe'))
+        for c in cands:
+            if c and os.path.isfile(os.path.join(c, 'HW32ExamAPI.dll')):
+                return c
+        c = QFileDialog.getExistingDirectory(self, 'Elige la carpeta de HScribe que tiene HW32ExamAPI.dll', d)
+        if c and os.path.isfile(os.path.join(c, 'HW32ExamAPI.dll')):
+            self.cfg.setValue('dll_hscribe', c); return c
+        return None
+
+    def importar_hscribe(self, d):
+        exe = recurso('hscribe', 'export180.exe')
+        if sys.platform != 'win32' or not os.path.isfile(exe):
+            QMessageBox.warning(self, 'HolterLocal', 'Los exámenes de HScribe solo se pueden leer en Windows.'); return
+        dll = self._dll_hscribe(d)
+        if not dll:
+            QMessageBox.warning(self, 'HolterLocal', 'No encontré HW32ExamAPI.dll de HScribe, que hace falta para leer la señal.'); return
+        nombre = ''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in os.path.basename(os.path.normpath(d))) or 'examen'
+        out = os.path.join(self.motor.tmp, 'hscribe_' + nombre); os.makedirs(out, exist_ok=True)
+        base = os.path.join(out, nombre)
+        self.dlg = QProgressDialog('Leyendo la señal de HScribe (puede tardar unos minutos)…', None, 0, 0, self)
+        self.dlg.setWindowTitle('Importando'); self.dlg.setWindowModality(Qt.WindowModal); self.dlg.setMinimumDuration(0); self.dlg.show()
+        self.hs_proc = QProcess(self); self.hs_proc.setWorkingDirectory(dll)
+        self.hs_proc.setProcessChannelMode(QProcess.MergedChannels)
+        self.hs_proc.finished.connect(lambda *a: self._hscribe_fin(base))
+        self.hs_proc.start(exe, [d, base, '0', dll, '0'])
+
+    def _hscribe_fin(self, base):
+        txt = bytes(self.hs_proc.readAll()).decode('utf-8', 'replace'); rc = self.hs_proc.exitCode(); self.hs_proc = None
+        if self.dlg:
+            self.dlg.close(); self.dlg = None
+        hea = base + '.hea'
+        if rc != 0 or not os.path.isfile(hea):
+            QMessageBox.critical(self, 'HolterLocal', 'No se pudo leer el examen de HScribe:\n\n' + txt[-1500:]); return
+        self.cargar([hea])
 
     def abrir_horas(self):
         d = self.cfg.value('carpeta', os.path.expanduser('~'))
