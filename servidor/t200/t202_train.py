@@ -139,6 +139,9 @@ def main():
     ap.add_argument("--paciencia", type=int, default=4)
     ap.add_argument("--val_tags", default="holter,icentia,taqui")
     ap.add_argument("--rob", type=float, default=0.0, help="prob. de perturbar canales en train")
+    ap.add_argument("--s_neg_w", type=float, default=1.0, help="peso de la perdida de S en ventanas sin S (menos S falsas)")
+    ap.add_argument("--s_negv_w", type=float, default=1.0, help="peso extra si ademas la ventana tiene V")
+    ap.add_argument("--s_samp", type=float, default=1.0, help="muestreo extra de ventanas con V y sin S")
     args = ap.parse_args()
     torch.manual_seed(202)
     torch.backends.cudnn.benchmark = True
@@ -172,6 +175,7 @@ def main():
     ytr = np.stack([y7(srcs[s], j) for s, j in tr])
     weights = np.array([w_db[d] for d in dbs_tr])
     weights = weights * np.where((ytr[:, 5] == 1) | (ytr[:, 6] == 1), 8.0, 1.0)
+    weights = weights * np.where((ytr[:, 2] == 1) & (ytr[:, 3] == 0), args.s_samp, 1.0)
     pos = ((ytr == 1) * weights[:, None]).sum(0)
     neg = ((ytr == 0) * weights[:, None]).sum(0)
     pw = np.clip(np.sqrt(np.maximum(neg, 1e-9) / np.maximum(pos, 1e-9)), 1.0, 30.0)
@@ -252,6 +256,9 @@ def main():
         logits = logits.float()
         m = (yb >= 0).float()
         elem = nn.functional.binary_cross_entropy_with_logits(logits, yb.clamp(min=0), pos_weight=pw_t, reduction="none")
+        if args.s_neg_w != 1.0 or args.s_negv_w != 1.0:
+            w3 = torch.where(yb[:, 3] == 0, torch.where(yb[:, 2] == 1, args.s_neg_w * args.s_negv_w, args.s_neg_w), 1.0)
+            elem = torch.cat([elem[:, :3], elem[:, 3:4] * w3[:, None], elem[:, 4:]], 1)
         loss = (elem * m).sum() / m.sum().clamp(min=1.0)
         opt.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
