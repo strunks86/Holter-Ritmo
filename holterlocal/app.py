@@ -949,16 +949,23 @@ def autoprueba(win, carpeta, rutas):
     def salir(codigo):
         # salida directa: en Windows un proceso hijo (holterai) o un hilo del motor no debe dejar la app abierta
         try:
-            log.close()
+            if win.ha_proc is not None:
+                win.ha_proc.kill()
+            if win.motor.proc:
+                win.motor.proc.kill()
         except Exception:  # noqa: BLE001
             pass
         try:
-            if win.ha_proc is not None:
-                win.ha_proc.kill()
-            win.motor.cerrar()
+            log.write('salida %d\n' % codigo); log.close()
         except Exception:  # noqa: BLE001
             pass
-        sys.stdout.flush(); os._exit(codigo)
+        sys.stdout.flush()
+        if os.name == 'nt':
+            # TerminateProcess no avisa a las DLL al salir (os._exit sí, y en Windows eso puede quedar trabado)
+            import ctypes
+            k = ctypes.windll.kernel32
+            k.TerminateProcess(k.GetCurrentProcess(), codigo)
+        os._exit(codigo)
 
     def esperar():
         estado['paso'] -= 1
