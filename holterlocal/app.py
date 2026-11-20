@@ -931,13 +931,41 @@ def autoprueba(win, carpeta, rutas):
     def escribir(m):
         log.write(m + '\n'); log.flush(); print(m, flush=True)
 
+    # en la autoprueba ningún aviso puede quedar esperando un clic: se anota y se sigue
+    def aviso(titulo):
+        def f(*a, **k):
+            escribir('aviso (%s): %s' % (titulo, ' '.join(str(x) for x in a[1:3]).replace('\n', ' ')))
+            return QMessageBox.Yes if titulo == 'pregunta' else QMessageBox.Ok
+        return staticmethod(f)
+    QMessageBox.critical = aviso('error'); QMessageBox.warning = aviso('advertencia')
+    QMessageBox.information = aviso('información'); QMessageBox.question = aviso('pregunta')
+
+    def vigilante():
+        time.sleep(2600)
+        escribir('FALLO: la autoprueba quedó detenida en el paso %d' % estado['paso']); salir(5)
+    import threading
+    threading.Thread(target=vigilante, daemon=True).start()
+
+    def salir(codigo):
+        # salida directa: en Windows un proceso hijo (holterai) o un hilo del motor no debe dejar la app abierta
+        try:
+            log.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if win.ha_proc is not None:
+                win.ha_proc.kill()
+            win.motor.cerrar()
+        except Exception:  # noqa: BLE001
+            pass
+        sys.stdout.flush(); os._exit(codigo)
+
     def esperar():
         estado['paso'] -= 1
 
     def tick():
-        app = QApplication.instance()
         if time.time() - estado['t'] > 1500:
-            escribir('FALLO: el análisis no terminó a tiempo (paso %d)' % estado['paso']); app.exit(2); return
+            escribir('FALLO: el análisis no terminó a tiempo (paso %d)' % estado['paso']); salir(2); return
         if win.ex is None or win.ha_proc is not None or (win.cfg.value('motor', 'mixto') in ('mixto', 'holterai') and not getattr(win.ex, 'ha', None)):
             return
         p = estado['paso']; estado['paso'] += 1
@@ -1008,14 +1036,14 @@ def autoprueba(win, carpeta, rutas):
                 escribir(f'volver a abrir: {len(ex.t)} latidos, latido corregido = {CLS_SYM[int(ex.cls[b])]}, '
                          f'{int((ex.edited == 1).sum())} ediciones, {len(ex.sesion.d["tiras"])} tiras, paciente {ex.sesion.d["paciente"].get("apellido", "")}')
                 if not ok:
-                    escribir('FALLO: el trabajo guardado no se recuperó igual'); log.close(); app.exit(3); return
+                    escribir('FALLO: el trabajo guardado no se recuperó igual'); salir(3); return
                 win.tabs.setCurrentWidget(win.v_res); QApplication.processEvents()
                 win.grab().save(os.path.join(carpeta, 'pantalla_reabierto.png'))
             else:
-                escribir('OK'); log.close(); app.exit(0)
+                escribir('OK'); salir(0)
         except Exception:  # noqa: BLE001
             import traceback
-            escribir('FALLO en el paso %d:\n%s' % (p, traceback.format_exc())); log.close(); app.exit(4)
+            escribir('FALLO en el paso %d:\n%s' % (p, traceback.format_exc())); salir(4)
 
     win.cargar(rutas)
     tm = QTimer(win); tm.timeout.connect(tick); tm.start(700)
