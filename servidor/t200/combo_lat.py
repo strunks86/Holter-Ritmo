@@ -11,7 +11,10 @@ dev = torch.device("cuda:0"); T = S7.T
 win_model, lat_model, dbs = sys.argv[1], sys.argv[2], sys.argv[3].split(",")
 src_code = open(Path(__file__).resolve().parent / "lat_train2.py").read()
 ns = {"nn": torch.nn, "torch": torch}; exec(src_code[src_code.index("class Blk"):src_code.index("net = Net()")], ns)
-lat = ns["Net"]().to(dev); lat.load_state_dict(torch.load(lat_model, map_location=dev)); lat.eval()
+lats = []
+for lm in lat_model.split("+"):
+    n_ = ns["Net"]().to(dev); n_.load_state_dict(torch.load(lm, map_location=dev)); n_.eval(); lats.append(n_)
+def lat(x, f): return torch.log(torch.stack([torch.softmax(n_(x, f), 1) for n_ in lats]).mean(0))
 win, _ = S7.make_model7(dev, Path(win_model))
 src = T.Src(T.NEW / "holter_X.npy", T.NEW / "holter_meta.npz"); src.TQ = np.load(T.NEW / "holter_tq.npz")["TQ"]
 rows = []
