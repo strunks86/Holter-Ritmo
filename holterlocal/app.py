@@ -1077,5 +1077,18 @@ def main(argv=None):
         autoprueba(win, a.autoprueba, rutas)
     elif a.examen:
         QTimer.singleShot(300, lambda: win.cargar(a.examen))
-    return app.exec()
+    codigo = app.exec()
+    try:
+        if win.ha_proc is not None:
+            win.ha_proc.kill()
+        win.motor.cerrar()
+    except Exception:  # noqa: BLE001
+        pass
+    if os.name == 'nt':
+        # al cerrar la ventana el proceso termina de inmediato aunque quede algún hilo o DLL trabada
+        sys.stdout.flush()
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.TerminateProcess(k.GetCurrentProcess(), codigo)
+    return codigo
 
