@@ -8,7 +8,7 @@ ap.add_argument("--sin_plantilla", action="store_true"); ap.add_argument("--sin_
 a = ap.parse_args()
 out = Path("/root/holter/t200/runs") / a.name; out.mkdir(parents=True, exist_ok=True)
 def log(*x): print(time.strftime("[%H:%M:%S]"), *x, flush=True)
-X = np.load(D / "lat_X.npy", mmap_mode="r"); m = np.load(D / "lat_meta.npz"); F, y, split, db = m["F"], m["y"].astype(np.int64), m["split"], m["db"]
+import os; SUF = os.environ.get("LATSUF", ""); X = np.load(D / f"lat_X{SUF}.npy", mmap_mode="r"); m = np.load(D / f"lat_meta{SUF}.npz"); F, y, split, db = m["F"], m["y"].astype(np.int64), m["split"], m["db"]
 F = F.copy(); F[:, :2] = np.clip(F[:, :2], 0, 3); F[:, 2] = np.clip(F[:, 2], 0.2, 2.5); F[:, 3] = np.clip(F[:, 3], 0, 1); F[:, 5] /= 3
 for d_ in [d for d in a.sin_s_de.split(",") if d]: y[(db == d_) & (y == 1)] = -1  # S dudosas: sin etiqueta
 ok = y >= 0; tr = np.where(ok & (split == "train"))[0]; va = np.where(ok & (split == "val"))[0]; te = np.where(ok & (split == "test"))[0]

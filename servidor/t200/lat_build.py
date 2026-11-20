@@ -6,7 +6,9 @@ import numpy as np, wfdb
 from scipy.signal import butter, sosfiltfilt, resample_poly
 from fractions import Fraction
 from concurrent.futures import ProcessPoolExecutor
+import os
 R = Path("/root/holter/data/HolterIA"); OUT = Path("/root/holter/t200/data")
+SUF = os.environ.get("LATSUF", "")  # "_r2": referencia RR = mediana de promedios de pares de RR (robusta a bigeminismo)
 FS = 250; W0, W1 = int(0.30 * FS), int(0.40 * FS)  # 175 muestras
 TODOS = False
 NORMAL = set("NLRejB"); SV = set("AaJS"); VE = set("VE")
@@ -30,7 +32,11 @@ def one(args):
     sc = np.percentile(np.abs(x), 99, axis=0) + 1e-6; x = x / sc
     B = np.stack([x[i - W0:i + W1] for i in r])  # n, 175, c
     rr = np.diff(r, prepend=r[0]) / FS; rr[0] = np.median(rr)
-    ref = np.array([np.median(rr[max(0, i - 9):i]) if i > 2 else np.median(rr) for i in range(len(rr))])
+    if SUF == "_r2":
+        pa = np.concatenate([[rr[0]], (rr[1:] + rr[:-1]) / 2])
+        ref = np.array([np.median(pa[max(1, i - 9):i]) if i > 3 else np.median(rr) for i in range(len(rr))])
+    else:
+        ref = np.array([np.median(rr[max(0, i - 9):i]) if i > 2 else np.median(rr) for i in range(len(rr))])
     prem = rr / np.maximum(ref, 1e-3); post = np.append(rr[1:], rr[-1]) / np.maximum(ref, 1e-3)
     cv = np.array([np.std(rr[max(0, i - 9):i + 1]) / (np.mean(rr[max(0, i - 9):i + 1]) + 1e-6) for i in range(len(rr))])
     # plantilla habitual por tramos de 5 min: mediana de latidos no prematuros, refinada con los mas parecidos (no usa etiquetas)
@@ -70,9 +76,9 @@ def main():
             db, rec, split, X, F, y = o; n = len(y)
             Xs.append(X); Fs.append(F); Ys.append(y); Ds += [db] * n; Rs += [rec] * n; Ss += [split] * n
             if k % 20 == 0: print(k, len(jobs), db, rec, n, flush=True)
-    X = np.concatenate(Xs); np.save(OUT / "lat_X.npy", X)
+    X = np.concatenate(Xs); np.save(OUT / f"lat_X{SUF}.npy", X)
     y = np.concatenate(Ys); S = np.array(Ss); D = np.array(Ds)
-    np.savez(OUT / "lat_meta.npz", F=np.concatenate(Fs), y=y, db=D, rec=np.array(Rs), split=S)
+    np.savez(OUT / f"lat_meta{SUF}.npz", F=np.concatenate(Fs), y=y, db=D, rec=np.array(Rs), split=S)
     for s in ("train", "val", "test"):
         for d in sorted(set(D)):
             m = (S == s) & (D == d)
