@@ -923,7 +923,11 @@ class Principal(QMainWindow):
 def terminar(codigo):
     """Termina el proceso al instante. En Windows usa TerminateProcess: os._exit pasa por ExitProcess, que avisa a
     las DLL (Qt) y puede quedar trabado para siempre si un hilo suyo ya fue detenido."""
-    sys.stdout.flush(); sys.stderr.flush()
+    for f in (sys.stdout, sys.stderr):  # en el .exe sin consola son None
+        try:
+            f.flush()
+        except Exception:  # noqa: BLE001
+            pass
     if os.name == 'nt':
         import ctypes
         from ctypes import wintypes
@@ -944,7 +948,10 @@ def autoprueba(win, carpeta, rutas):
     n_tabs = win.tabs.count()
 
     def escribir(m):
-        log.write(m + '\n'); log.flush(); print(m, flush=True)
+        try:
+            log.write(m + '\n'); log.flush(); print(m, flush=True)
+        except Exception:  # noqa: BLE001
+            pass
 
     # en la autoprueba ningún aviso puede quedar esperando un clic: se anota y se sigue
     def aviso(titulo):
@@ -974,7 +981,6 @@ def autoprueba(win, carpeta, rutas):
             log.write('salida %d\n' % codigo); log.close()
         except Exception:  # noqa: BLE001
             pass
-        sys.stdout.flush()
         terminar(codigo)
 
     def esperar():
