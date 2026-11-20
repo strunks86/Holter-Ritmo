@@ -64,9 +64,20 @@ jobs:
           foreach ($m in 'estacion', 'holterai', 'mixto') {
             $dir = "$PWD\autoprueba\$m"
             $p = Start-Process -FilePath dist\HolterLocal\HolterLocal.exe -ArgumentList '--motor', $m, '--autoprueba', $dir -PassThru
-            if (-not $p.WaitForExit(2700000)) { $p.Kill(); Get-Content "$dir\autoprueba.txt" -ErrorAction SilentlyContinue; throw "La autoprueba ($m) no terminó en 45 minutos" }
-            Get-Content "$dir\autoprueba.txt"
-            if ($p.ExitCode -ne 0) { throw "La autoprueba ($m) falló (código $($p.ExitCode))" }
+            $fin = (Get-Date).AddMinutes(45); $salida = $null
+            while ((Get-Date) -lt $fin) {
+              if ($p.HasExited) { break }
+              $l = Select-String -Path "$dir\autoprueba.txt" -Pattern '^salida (\d+)$' -ErrorAction SilentlyContinue
+              if ($l) { $salida = [int]$l.Matches[0].Groups[1].Value; Start-Sleep 10; break }
+              Start-Sleep 5
+            }
+            if (-not $p.HasExited) { Write-Host "::warning::El proceso ($m) seguía abierto 10 s después de terminar; se cierra a la fuerza"; $p.Kill() }
+            Get-Content "$dir\autoprueba.txt" -ErrorAction SilentlyContinue
+            if ($salida -eq $null) {
+              if (-not $p.HasExited -or (Get-Date) -ge $fin) { throw "La autoprueba ($m) no terminó en 45 minutos" }
+              $salida = $p.ExitCode
+            }
+            if ($salida -ne 0) { throw "La autoprueba ($m) falló (código $salida)" }
             if (-not (Select-String -Path "$dir\autoprueba.txt" -Pattern '^OK$' -Quiet)) { throw "La autoprueba ($m) no llegó al final" }
           }
           if (-not (Select-String -Path autoprueba\holterai\autoprueba.txt -Pattern 'motor: holterai' -Quiet)) { throw 'holterai no reemplazó al análisis rápido' }

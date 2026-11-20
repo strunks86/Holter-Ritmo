@@ -920,6 +920,21 @@ class Principal(QMainWindow):
         self.guardar(); self.motor.cerrar(); super().closeEvent(e)
 
 
+def terminar(codigo):
+    """Termina el proceso al instante. En Windows usa TerminateProcess: os._exit pasa por ExitProcess, que avisa a
+    las DLL (Qt) y puede quedar trabado para siempre si un hilo suyo ya fue detenido."""
+    sys.stdout.flush(); sys.stderr.flush()
+    if os.name == 'nt':
+        import ctypes
+        from ctypes import wintypes
+        k = ctypes.WinDLL('kernel32', use_last_error=True)
+        k.GetCurrentProcess.restype = wintypes.HANDLE
+        k.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        k.TerminateProcess.restype = wintypes.BOOL
+        k.TerminateProcess(k.GetCurrentProcess(), int(codigo))
+    os._exit(codigo)
+
+
 def autoprueba(win, carpeta, rutas):
     """Abre un examen, recorre las pestañas, corrige, inserta y borra latidos, arma tiras e informe, vuelve a abrir el examen
     para comprobar que el trabajo se recupera, guarda capturas y sale con código 0 si todo funcionó."""
@@ -960,12 +975,7 @@ def autoprueba(win, carpeta, rutas):
         except Exception:  # noqa: BLE001
             pass
         sys.stdout.flush()
-        if os.name == 'nt':
-            # TerminateProcess no avisa a las DLL al salir (os._exit sí, y en Windows eso puede quedar trabado)
-            import ctypes
-            k = ctypes.windll.kernel32
-            k.TerminateProcess(k.GetCurrentProcess(), codigo)
-        os._exit(codigo)
+        terminar(codigo)
 
     def esperar():
         estado['paso'] -= 1
@@ -1086,9 +1096,6 @@ def main(argv=None):
         pass
     if os.name == 'nt':
         # al cerrar la ventana el proceso termina de inmediato aunque quede algún hilo o DLL trabada
-        sys.stdout.flush()
-        import ctypes
-        k = ctypes.windll.kernel32
-        k.TerminateProcess(k.GetCurrentProcess(), codigo)
+        terminar(codigo)
     return codigo
 
