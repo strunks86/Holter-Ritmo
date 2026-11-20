@@ -67,12 +67,13 @@ jobs:
             $fin = (Get-Date).AddMinutes(45); $salida = $null
             while ((Get-Date) -lt $fin) {
               if ($p.HasExited) { break }
-              $l = Select-String -Path "$dir\autoprueba.txt" -Pattern '^salida (\d+)$' -ErrorAction SilentlyContinue
+              $l = $null
+              if (Test-Path "$dir\autoprueba.txt") { $l = Select-String -Path "$dir\autoprueba.txt" -Pattern '^salida (\d+)$' }
               if ($l) { $salida = [int]$l.Matches[0].Groups[1].Value; Start-Sleep 10; break }
               Start-Sleep 5
             }
             if (-not $p.HasExited) { Write-Host "::warning::El proceso ($m) seguía abierto 10 s después de terminar; se cierra a la fuerza"; $p.Kill() }
-            Get-Content "$dir\autoprueba.txt" -ErrorAction SilentlyContinue
+            if (Test-Path "$dir\autoprueba.txt") { Get-Content "$dir\autoprueba.txt" }
             if ($salida -eq $null) {
               if (-not $p.HasExited -or (Get-Date) -ge $fin) { throw "La autoprueba ($m) no terminó en 45 minutos" }
               $salida = $p.ExitCode
