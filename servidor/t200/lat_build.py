@@ -8,6 +8,7 @@ from fractions import Fraction
 from concurrent.futures import ProcessPoolExecutor
 R = Path("/root/holter/data/HolterIA"); OUT = Path("/root/holter/t200/data")
 FS = 250; W0, W1 = int(0.30 * FS), int(0.40 * FS)  # 175 muestras
+TODOS = False
 NORMAL = set("NLRejB"); SV = set("AaJS"); VE = set("VE")
 def one(args):
     db, path, ext, split = args
@@ -49,6 +50,7 @@ def one(args):
     rng = np.random.default_rng(abs(hash(path)) % 2**31); nb = np.zeros(len(r), bool); e = np.where(y > 0)[0]
     for d in (-2, -1, 1, 2): nb[np.clip(e + d, 0, len(r) - 1)] = True
     kp = (y > 0) | ((y == 0) & (nb | (rng.random(len(r)) < 1 / 6)))
+    if TODOS: return db, Path(path).name, split, X, F, y, r / FS
     return db, Path(path).name, split, X[kp], F[kp], y[kp]
 def main():
     hm = np.load(OUT / "holter_meta.npz"); sp = {(d, r): s for d, r, s in zip(hm["db"], hm["rec"], hm["split"])}
@@ -76,4 +78,4 @@ def main():
             m = (S == s) & (D == d)
             if m.any(): print(s, d, "N", int((y[m] == 0).sum()), "S", int((y[m] == 1).sum()), "V", int((y[m] == 2).sum()), flush=True)
     print("LISTO", X.shape)
-main()
+if __name__ == "__main__": main()

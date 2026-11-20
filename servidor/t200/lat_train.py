@@ -4,12 +4,13 @@ from pathlib import Path
 import numpy as np, torch, torch.nn as nn
 D = Path("/root/holter/t200/data")
 ap = argparse.ArgumentParser(); ap.add_argument("--name", default="lat1"); ap.add_argument("--minutes", type=float, default=40)
-ap.add_argument("--sin_plantilla", action="store_true"); ap.add_argument("--bs", type=int, default=512); ap.add_argument("--lr", type=float, default=1e-3)
+ap.add_argument("--sin_plantilla", action="store_true"); ap.add_argument("--sin_s_de", default=""); ap.add_argument("--bs", type=int, default=512); ap.add_argument("--lr", type=float, default=1e-3)
 a = ap.parse_args()
 out = Path("/root/holter/t200/runs") / a.name; out.mkdir(parents=True, exist_ok=True)
 def log(*x): print(time.strftime("[%H:%M:%S]"), *x, flush=True)
 X = np.load(D / "lat_X.npy", mmap_mode="r"); m = np.load(D / "lat_meta.npz"); F, y, split, db = m["F"], m["y"].astype(np.int64), m["split"], m["db"]
 F = F.copy(); F[:, :2] = np.clip(F[:, :2], 0, 3); F[:, 2] = np.clip(F[:, 2], 0.2, 2.5); F[:, 3] = np.clip(F[:, 3], 0, 1); F[:, 5] /= 3
+for d_ in [d for d in a.sin_s_de.split(",") if d]: y[(db == d_) & (y == 1)] = -1  # S dudosas: sin etiqueta
 ok = y >= 0; tr = np.where(ok & (split == "train"))[0]; va = np.where(ok & (split == "val"))[0]; te = np.where(ok & (split == "test"))[0]
 log("train", len(tr), np.bincount(y[tr]).tolist(), "val", len(va), np.bincount(y[va]).tolist(), "test", len(te), np.bincount(y[te]).tolist())
 dev = torch.device("cuda:0")
@@ -67,6 +68,7 @@ crit = nn.CrossEntropyLoss(weight=torch.tensor([1.0, 1.0, 1.0], device=dev))
 vs = np.sort(np.random.default_rng(0).choice(va, min(len(va), 300000), replace=False))
 while time.time() - t0 < a.minutes * 60:
     idx = np.random.choice(tr, a.bs, p=w); x, f, yb = batch(idx, True)
+    fr = min(1.0, (time.time() - t0) / (a.minutes * 60)); [g.__setitem__("lr", a.lr * (0.03 + 0.97 * 0.5 * (1 + np.cos(np.pi * fr)))) for g in opt.param_groups]
     loss = crit(net(x, f), yb); opt.zero_grad(); loss.backward(); opt.step(); step += 1
     if step % 500 == 0: log("paso", step, "loss", round(loss.item(), 4))
     if time.time() - t0 > nxt:
