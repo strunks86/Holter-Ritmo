@@ -1,15 +1,14 @@
-"""Pestañas de la aplicación: resumen, eventos, plantillas, tendencias, histogramas, criterios y validación."""
+"""Pestañas de la aplicación: eventos, plantillas, tendencias, histogramas, criterios y validación."""
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPolygonF
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout,
-                               QHeaderView, QLabel, QListWidget, QListWidgetItem, QPushButton, QSpinBox,
-                               QSplitter, QTextBrowser, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
-                               QCheckBox)
+from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox,
+                               QHBoxLayout, QHeaderView, QLabel, QListWidget, QListWidgetItem, QMenu, QPushButton, QRadioButton,
+                               QSpinBox, QSplitter, QTextBrowser, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from .estilo import COLOR_CLASE, RESUMEN_CSS
-from .motor import CLS_NAME, CLS_SYM, EVENT_LABEL, EVENT_NAMES
+from .motor import CLS_NAME, CLS_SYM, EVENT_LABEL, EVENT_NAMES, GRUPO_CLASE, ORDEN_ETIQUETAS
 
 pg.setConfigOptions(antialias=True, background='w', foreground='#1f2933')
 
@@ -27,89 +26,6 @@ def fmt(v, d=0):
 def dur_txt(s):
     s = int(round(s or 0)); h, r = divmod(s, 3600); m, s = divmod(r, 60)
     return f'{h} h {m:02d} min' if h else (f'{m} min {s:02d} s' if m else f'{s} s')
-
-
-# --------------------------------------------------------------------------- Resumen
-class VistaResumen(QTextBrowser):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setOpenExternalLinks(False)
-        self.document().setDefaultStyleSheet(RESUMEN_CSS)
-        self.setHtml('<p class="m">Sin examen abierto.</p>')
-
-    def html(self, ex):
-        A = ex.A; hr = A.get('hr') or {}; cnt = A.get('cnt') or {}; c = A.get('counts') or [0] * 10
-        by = {}
-        for e in ex.eventos:
-            by.setdefault(e['type'], []).append(e)
-        n = lambda k: len(by.get(k, []))
-        filas = lambda rows: '<table>' + ''.join(f'<tr><td>{a}</td><td class="n"><b>{b}</b></td><td class="m">{c_ or ""}</td></tr>' for a, b, c_ in rows) + '</table>'
-        h = [f'<h2>{ex.nombre}</h2><p class="m">{ex.fuente} · {ex.nsig} canales a {fmt(ex.fs)} Hz · inicio {ex.reloj(0)} · '
-             f'duración {dur_txt(ex.dur)} · motor {A.get("motor", "")}</p>']
-        h.append('<h3>Calidad de la señal</h3>' + filas([
-            ('Tiempo analizado', dur_txt(A.get('analyzedSec', 0)), ''),
-            ('Tiempo excluido por artefacto o sin señal', fmt(A.get('exPct', 0), 1) + ' %', dur_txt(A.get('exSec', 0))),
-            ('Latidos marcados como artefacto', fmt(c[4]), ''),
-        ]))
-        h.append('<h3>Frecuencia cardíaca</h3>' + filas([
-            ('Latidos totales', fmt(A.get('total')), ''),
-            ('FC media', fmt(hr.get('mean')) + ' lpm', ''),
-            ('FC mínima', fmt(hr.get('min')) + ' lpm', ex.reloj(ex.t[hr['minB']]) if hr.get('minB') is not None and hr.get('minB', -1) < len(ex.t) else ''),
-            ('FC máxima', fmt(hr.get('max')) + ' lpm', ex.reloj(ex.t[hr['maxB']]) if hr.get('maxB') is not None and hr.get('maxB', -1) < len(ex.t) else ''),
-            ('RR más largo', fmt(A.get('rrMax'), 2) + ' s', ex.reloj(ex.t[A['rrMaxB']]) if A.get('rrMaxB') is not None and 0 <= A.get('rrMaxB', -1) < len(ex.t) else ''),
-            ('Pausas ≥ %s s' % fmt((A.get('settings') or {}).get('pauseSec', 2), 1), fmt(A.get('pauses')), ''),
-            ('Bradicardia / taquicardia', f'{n("brady")} / {n("tachy")}', 'episodios'),
-        ]))
-        vt = by.get('vt', [])
-        h.append('<h3>Ectopia ventricular</h3>' + filas([
-            ('Extrasístoles ventriculares', fmt(A.get('vTot')), fmt(A.get('vBurden'), 2) + ' % de los latidos'),
-            ('Aisladas / pares / rachas', f'{fmt(cnt.get("vIso"))} / {fmt(cnt.get("vPair"))} / {fmt(cnt.get("vRun"))}', ''),
-            ('Bigeminismo / trigeminismo', f'{n("vBig")} / {n("vTrig")}', 'tramos'),
-            ('Taquicardia ventricular', fmt(len(vt)), ('más larga %d latidos, más rápida %s lpm' % (max(e['n'] for e in vt), fmt(max(e.get('rate', 0) for e in vt)))) if vt else ''),
-            ('R sobre T / interpoladas / fusión', f'{fmt(A.get("rOnT"))} / {fmt(A.get("interp"))} / {fmt(c[3])}', ''),
-        ]))
-        svt = by.get('svt', [])
-        h.append('<h3>Ectopia supraventricular</h3>' + filas([
-            ('Extrasístoles supraventriculares', fmt(A.get('sTot')), fmt(A.get('sBurden'), 2) + ' % de los latidos'),
-            ('Aisladas / pares / rachas', f'{fmt(cnt.get("sIso"))} / {fmt(cnt.get("sPair"))} / {fmt(cnt.get("sRun"))}', ''),
-            ('Bigeminismo / trigeminismo', f'{n("sBig")} / {n("sTrig")}', 'tramos'),
-            ('Taquicardia supraventricular', fmt(len(svt)), ('más larga %d latidos' % max(e['n'] for e in svt)) if svt else ''),
-        ]))
-        af = A.get('af') or {}
-        h.append('<h3>Fibrilación auricular</h3>' + filas([
-            ('Carga de FA', fmt(af.get('pct'), 1) + ' %', dur_txt(af.get('sec', 0))),
-            ('Episodios', fmt(af.get('episodes')), ('el más largo ' + dur_txt(af.get('longest', 0))) if af.get('episodes') else ''),
-        ]))
-        extra = A.get('extra_html')
-        if extra:
-            h.append(extra)
-        qt = A.get('qt') or {}; hrv = A.get('hrv') or {}
-        if qt:
-            h.append('<h3>QT</h3>' + filas([
-                ('QTc medio (%s)' % (A.get('settings') or {}).get('qtcFormula', 'bazett'), fmt(qt.get('mean')) + ' ms', 'mín %s · máx %s' % (fmt(qt.get('min')), fmt(qt.get('max')))),
-                ('Minutos con QTc > 450 / 500 ms', f'{fmt(qt.get("over450"), 1)} % / {fmt(qt.get("over500"), 1)} %', ''),
-            ]))
-        if hrv:
-            h.append('<h3>Variabilidad</h3>' + filas([
-                ('SDNN / SDANN / índice SDNN', f'{fmt(hrv.get("sdnn"))} / {fmt(hrv.get("sdann"))} / {fmt(hrv.get("sdnnIndex"))} ms', ''),
-                ('RMSSD / pNN50', f'{fmt(hrv.get("rmssd"))} ms / {fmt(hrv.get("pnn50"), 1)} %', ''),
-                ('LF / HF / cociente', f'{fmt(hrv.get("lf"))} / {fmt(hrv.get("hf"))} / {fmt(hrv.get("lfhf"), 2)}', 'ms²'),
-            ]))
-        hours = A.get('hours') or []
-        if hours:
-            cols = [('Hora', lambda x: ex.reloj(x['t0'], False)), ('Latidos', lambda x: fmt(x.get('beats'))),
-                    ('FC mín', lambda x: fmt(x.get('hrMin'))), ('FC media', lambda x: fmt(x.get('hrMean'))), ('FC máx', lambda x: fmt(x.get('hrMax'))),
-                    ('Pausas', lambda x: fmt(x.get('pauses'))), ('V', lambda x: fmt(x.get('vTot'))), ('V pares', lambda x: fmt(x.get('vPair'))),
-                    ('V rachas', lambda x: fmt(x.get('vRun'))), ('S', lambda x: fmt(x.get('sTot'))), ('S rachas', lambda x: fmt(x.get('sRun'))),
-                    ('FA %', lambda x: fmt(x.get('afPct'), 0))]
-            t = '<table><tr>' + ''.join(f'<th>{a}</th>' for a, _ in cols) + '</tr>'
-            for x in hours:
-                t += '<tr>' + ''.join(f'<td class="n">{f(x)}</td>' for _, f in cols) + '</tr>'
-            h.append('<h3>Tabla horaria</h3>' + t + '</table>')
-        return ''.join(h)
-
-    def mostrar(self, ex):
-        self.setHtml(self.html(ex))
 
 
 # --------------------------------------------------------------------------- Eventos
@@ -161,8 +77,8 @@ class VistaEventos(QWidget):
 
 
 # --------------------------------------------------------------------------- Plantillas
-def icono_plantilla(T, nch, M, k, sz=QSize(150, 110)):
-    pm = QPixmap(sz); pm.fill(QColor('#ffffff'))
+def icono_plantilla(T, nch, M, k, sz=QSize(150, 110), sel=False):
+    pm = QPixmap(sz); pm.fill(QColor('#fff8d6' if sel else '#ffffff'))
     p = QPainter(pm); p.setRenderHint(QPainter.Antialiasing)
     p.setPen(QPen(QColor('#f0d4d4'), 1))
     for x in range(0, sz.width(), 10):
@@ -181,60 +97,104 @@ def icono_plantilla(T, nch, M, k, sz=QSize(150, 110)):
     return QIcon(pm)
 
 
+class ListaPlantillas(QListWidget):
+    tecla = Signal(int)
+    tab = Signal(int)
+
+    def keyPressEvent(self, e):
+        from .tira import TECLAS
+        if e.key() in TECLAS and not (e.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier)):
+            self.tecla.emit(TECLAS[e.key()]); return
+        super().keyPressEvent(e)
+
+    def event(self, e):
+        if e.type() == e.Type.KeyPress and e.key() in (Qt.Key_Tab, Qt.Key_Backtab):
+            self.tab.emit(-1 if (e.key() == Qt.Key_Backtab or e.modifiers() & Qt.ShiftModifier) else 1); return True
+        return super().event(e)
+
+
+GRUPOS_PLANTILLA = [('*', 'Todas'), ('N', 'Normal'), ('S', 'Supraventricular'), ('V', 'Ventricular'), ('P', 'Estimulado'),
+                    ('U', 'Desconocido'), ('X', 'Artefacto')]
+
+
 class VistaPlantillas(QWidget):
     ir = Signal(float, int)
-    reetiquetar_plantilla = Signal(int, int)
+    reetiquetar_plantillas = Signal(list, int)
+    combinar = Signal(list)
+    borrar_plantillas = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.ex = None; self.pos = {}
+        self.ex = None; self.pos = {}; self.grupo = '*'; self.orden = []
         lay = QVBoxLayout(self); lay.setContentsMargins(6, 6, 6, 6)
-        top = QHBoxLayout()
-        self.filtro = QComboBox(); self.filtro.addItem('Todas las morfologías', -1)
-        for k in (0, 1, 2, 3, 4, 6, 7, 9):
-            self.filtro.addItem(CLS_NAME[k], k)
+        top = QHBoxLayout(); self.bg = QButtonGroup(self); self.radios = {}
+        for k, n in GRUPOS_PLANTILLA:
+            r = QRadioButton(n); r.setChecked(k == '*'); r.toggled.connect(lambda on, k=k: on and self._grupo(k)); self.bg.addButton(r); top.addWidget(r); self.radios[k] = r
         self.info = QLabel('Elige una morfología.'); self.info.setWordWrap(True)
-        top.addWidget(QLabel('Mostrar')); top.addWidget(self.filtro); top.addWidget(self.info, 1)
+        top.addSpacing(10); top.addWidget(self.info, 1)
         lay.addLayout(top)
-        self.lista = QListWidget(); self.lista.setViewMode(QListWidget.IconMode); self.lista.setIconSize(QSize(150, 110))
+        self.lista = ListaPlantillas(); self.lista.setViewMode(QListWidget.IconMode); self.lista.setIconSize(QSize(150, 110))
         self.lista.setResizeMode(QListWidget.Adjust); self.lista.setMovement(QListWidget.Static); self.lista.setSpacing(6)
-        self.lista.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.lista.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.lista.setContextMenuPolicy(Qt.CustomContextMenu); self.lista.customContextMenuRequested.connect(self._menu)
         lay.addWidget(self.lista, 1)
         bot = QHBoxLayout()
         self.bprev = QPushButton('◀ Latido anterior'); self.bnext = QPushButton('Latido siguiente ▶')
-        bot.addWidget(self.bprev); bot.addWidget(self.bnext); bot.addSpacing(16); bot.addWidget(QLabel('Etiquetar toda la morfología como:'))
-        for k in (0, 1, 2, 3, 6, 7, 9, 4):
-            b = QPushButton(CLS_NAME[k]); b.clicked.connect(lambda _=False, k=k: self._rel(k)); bot.addWidget(b)
+        bot.addWidget(self.bprev); bot.addWidget(self.bnext); bot.addSpacing(16)
+        bot.addWidget(QLabel('Letra = etiquetar las elegidas · Ctrl/Mayús+clic o arrastrar = varias · clic derecho = combinar, borrar, artefacto · Tab = latido siguiente'))
         bot.addStretch(1)
         lay.addLayout(bot)
-        self.filtro.currentIndexChanged.connect(lambda _: self.mostrar(self.ex) if self.ex else None)
         self.lista.currentItemChanged.connect(lambda it, _: self._sel(it))
+        self.lista.tecla.connect(self._rel); self.lista.tab.connect(self._nav)
         self.bprev.clicked.connect(lambda: self._nav(-1)); self.bnext.clicked.connect(lambda: self._nav(1))
+
+    def _grupo(self, k):
+        self.grupo = k
+        if self.ex:
+            self.mostrar(self.ex)
 
     def dominante(self, i):
         tc = self.ex.A['tcls'][i] if i < len(self.ex.A.get('tcls', [])) else None
         return int(np.argmax(tc)) if tc and sum(tc) else 0
 
+    def grupo_de(self, k):
+        g = GRUPO_CLASE.get(k, 'U')
+        if g == 'S' and not (self.ex.A.get('settings') or {}).get('svTemplates', True):
+            g = 'N'
+        return g
+
     def mostrar(self, ex):
         self.ex = ex
+        self.radios['S'].setVisible((ex.A.get('settings') or {}).get('svTemplates', True))
         cur = self.lista.currentItem().data(Qt.UserRole) if self.lista.currentItem() else None
-        self.lista.clear()
+        self.lista.blockSignals(True); self.lista.clear()
         T = ex.A.get('templates') or []; nch = ex.A['nch']; M = ex.A.get('morphM', {}).get('M', 56)
-        f = self.filtro.currentData()
-        orden = sorted(range(len(T)), key=lambda i: -T[i]['count'])
-        for i in orden:
-            k = self.dominante(i)
-            n = int(sum(ex.A['tcls'][i])) if ex.A.get('tcls') else T[i]['count']
-            if f is not None and f >= 0 and k != f:
+        tcls = ex.A.get('tcls') or []
+        cuenta = [int(sum(tcls[i])) if i < len(tcls) else T[i]['count'] for i in range(len(T))]
+        self.orden = []
+        for i in sorted(range(len(T)), key=lambda i: -cuenta[i]):
+            k = self.dominante(i); n = cuenta[i]
+            if n == 0 or (self.grupo != '*' and self.grupo_de(k) != self.grupo):
                 continue
-            if n == 0:
-                continue
+            self.orden.append(i)
             it = QListWidgetItem(icono_plantilla(T[i], nch, M, k), f'#{i + 1} · {CLS_SYM[k]} · {fmt(n)}')
             it.setData(Qt.UserRole, i); it.setToolTip(f'{CLS_NAME[k]} · {fmt(n)} latidos · ancho {fmt(T[i].get("width"))} ms')
             it.setForeground(QColor(COLOR_CLASE[k]))
             self.lista.addItem(it)
             if cur == i:
                 self.lista.setCurrentItem(it)
+        self.lista.blockSignals(False)
+
+    def elegidas(self):
+        return [it.data(Qt.UserRole) for it in self.lista.selectedItems()] or ([self.lista.currentItem().data(Qt.UserRole)] if self.lista.currentItem() else [])
+
+    def elegir(self, tid):
+        for j in range(self.lista.count()):
+            if self.lista.item(j).data(Qt.UserRole) == tid:
+                self.lista.setCurrentRow(j); return True
+        if self.grupo != '*':
+            self.radios['*'].setChecked(True); return self.elegir(tid)
+        return False
 
     def _sel(self, it):
         if not it or not self.ex:
@@ -256,11 +216,31 @@ class VistaPlantillas(QWidget):
             return
         self.pos[i] = int(np.clip(self.pos.get(i, 0) + d, 0, len(idx) - 1))
         b = int(idx[self.pos[i]]); self.ir.emit(float(self.ex.t[b]), b)
+        self.info.setText(f'<b>Morfología {i + 1}</b>: latido {self.pos[i] + 1} de {fmt(len(idx))}')
 
     def _rel(self, k):
-        it = self.lista.currentItem()
-        if it:
-            self.reetiquetar_plantilla.emit(int(it.data(Qt.UserRole)), k)
+        tids = self.elegidas()
+        if tids:
+            self.reetiquetar_plantillas.emit(tids, k)
+
+    def _menu(self, pos):
+        tids = self.elegidas()
+        if not tids:
+            return
+        m = QMenu(self)
+        sub = m.addMenu('Etiquetar %d plantilla(s) como' % len(tids))
+        for k in ORDEN_ETIQUETAS:
+            sub.addAction(f'{CLS_NAME[k]}\t{CLS_SYM[k]}', lambda k=k: self.reetiquetar_plantillas.emit(tids, k))
+        m.addAction('Artefacto en todos sus latidos (se excluyen de los cálculos)\tA', lambda: self.reetiquetar_plantillas.emit(tids, 4))
+        cur = self.lista.currentItem().data(Qt.UserRole) if self.lista.currentItem() else tids[0]
+        if cur in self.orden:
+            sig = self.orden[self.orden.index(cur):]
+            m.addAction('Reetiquetar esta y todas las siguientes (%d) como artefacto' % len(sig), lambda: self.reetiquetar_plantillas.emit(sig, 4))
+        if len(tids) > 1:
+            m.addAction('Combinar plantillas', lambda: self.combinar.emit(tids))
+        m.addSeparator()
+        m.addAction('Eliminar todos los latidos de la(s) plantilla(s)', lambda: self.borrar_plantillas.emit(tids))
+        m.exec(self.lista.viewport().mapToGlobal(pos))
 
 
 # --------------------------------------------------------------------------- Tendencias
@@ -273,115 +253,315 @@ class EjeReloj(pg.AxisItem):
         return [ex.reloj(v * 60, False) if ex else '' for v in values]
 
 
-class VistaTendencias(pg.GraphicsLayoutWidget):
+def _cinco(arr, f=np.nanmean):
+    n = int(np.ceil(len(arr) / 5)); out = np.full(n, np.nan)
+    for i in range(n):
+        s = arr[i * 5:(i + 1) * 5]
+        if len(s) and np.isfinite(s).any():
+            out[i] = f(s)
+    return out
+
+
+def series_tendencia(ex):
+    """Series de 5 minutos (en minutos desde el inicio)."""
+    M = ex.A.get('minute') or {}
+    arr = lambda k: np.array([np.nan if v is None else v for v in M.get(k, [])], float)
+    hr = arr('hr'); n = int(np.ceil(len(hr) / 5))
+    S = {'hr': _cinco(hr), 'hrmin': _cinco(arr('hrMin'), np.nanmin), 'hrmax': _cinco(arr('hrMax'), np.nanmax)}
+    S['rr'] = 60000.0 / S['hr']
+    S['v'] = _cinco(arr('v'), np.nansum); S['s'] = _cinco(arr('s'), np.nansum)
+    S['vmin'] = S['v'] / 5; S['smin'] = S['s'] / 5
+    S['af'] = _cinco(arr('af')) * 100
+    S['rmssd'] = _cinco(arr('rmssd')); S['sdnn'] = _cinco(arr('sdnn'))
+    S['qtc'] = _cinco(np.array([np.nan if v is None else v for v in (ex.A.get('qtc') or [])], float))
+    S['qt'] = _cinco(arr('qt'))
+    S['st'] = [_cinco(np.array([np.nan if v is None else v for v in s], float)) for s in (M.get('st') or [])]
+    idx5 = (ex.t // 300).astype(int) if len(ex.t) else np.zeros(0, int)
+
+    def latidos_en(tipos):
+        out = np.zeros(n)
+        for e in ex.eventos:
+            if e['type'] in tipos and e.get('b0', -1) >= 0:
+                b0, b1 = int(e['b0']), int(e.get('b1', e['b0']))
+                ii = idx5[b0:b1 + 1]; ii = ii[ii < n]
+                np.add.at(out, ii, 1)
+        return out
+
+    def eventos_en(tipos):
+        out = np.zeros(n)
+        for e in ex.eventos:
+            if e['type'] in tipos:
+                i = int(e['t0'] // 300)
+                if i < n:
+                    out[i] += 1
+        return out
+    S['vpar'] = eventos_en(['vPair']); S['vrun'] = eventos_en(['vt', 'aivr', 'ivr']); S['spar'] = eventos_en(['sPair']); S['srun'] = eventos_en(['svt', 'sRun'])
+    for k, ts in (('brady', ['brady']), ('tachy', ['tachy']), ('vbig', ['vBig']), ('vtrig', ['vTrig']), ('sbig', ['sBig']), ('strig', ['sTrig']),
+                  ('u1', ['u1']), ('u2', ['u2']), ('u3', ['u3'])):
+        S[k] = latidos_en(ts)
+    return S
+
+
+GRUPOS_TENDENCIA = {
+    'Ritmo': [('v', 'V (cuenta)', 'bar', '#dc2626'), ('vmin', 'V por minuto', 'bar', '#ef4444'), ('s', 'S (cuenta)', 'bar', '#1d4ed8'),
+              ('smin', 'S por minuto', 'bar', '#3b82f6'), ('vpar', 'Pares V', 'bar', '#b91c1c'), ('vrun', 'Rachas V', 'bar', '#7f1d1d'),
+              ('spar', 'Pares S', 'bar', '#1e40af'), ('srun', 'Rachas S', 'bar', '#1e3a8a'), ('af', 'FA (%)', 'bar', '#0d9488'),
+              ('rr', 'RR (ms)', 'line', '#374151'), ('hr', 'FC (lpm)', 'band', '#1f5fbf')],
+    'QT': [('qt', 'QT (ms)', 'dots', '#374151'), ('qtc', 'QTc (ms)', 'dots', '#7c3aed'), ('hr', 'FC (lpm)', 'band', '#1f5fbf'), ('rr', 'RR (ms)', 'line', '#374151')],
+    'ST': [('st', 'ST (µV)', 'st', ''), ('hr', 'FC (lpm)', 'band', '#1f5fbf'), ('rr', 'RR (ms)', 'line', '#374151')],
+    'Otros': [('brady', 'Latidos en bradicardia', 'bar', '#16a34a'), ('tachy', 'Latidos en taquicardia', 'bar', '#a16207'),
+              ('vbig', 'Bigeminismo V (latidos)', 'bar', '#b07a7a'), ('vtrig', 'Trigeminismo V (latidos)', 'bar', '#fdba74'),
+              ('sbig', 'Bigeminismo S (latidos)', 'bar', '#06b6d4'), ('strig', 'Trigeminismo S (latidos)', 'bar', '#808000'),
+              ('u1', 'Usuario 1', 'bar', '#b08968'), ('u2', 'Usuario 2', 'bar', '#c2410c'), ('u3', 'Usuario 3', 'bar', '#fb7185'),
+              ('hr', 'FC (lpm)', 'band', '#1f5fbf'), ('rr', 'RR (ms)', 'line', '#374151')],
+    'VFC': [('rmssd', 'RMSSD (ms)', 'line', '#0f766e'), ('sdnn', 'SDNN (ms)', 'line', '#7c3aed'), ('hr', 'FC (lpm)', 'band', '#1f5fbf'), ('rr', 'RR (ms)', 'line', '#374151')],
+}
+
+
+class VistaTendencias(QWidget):
     ir = Signal(float, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.ex = None
+        self.ex = None; self.grupo = 'Ritmo'; self.cursor_min = 0.0; self.plots = []; self.lineas = []
+        lay = QVBoxLayout(self); lay.setContentsMargins(6, 6, 6, 6)
+        top = QHBoxLayout(); self.bg = QButtonGroup(self)
+        for g in GRUPOS_TENDENCIA:
+            r = QRadioButton(g); r.setChecked(g == 'Ritmo'); r.toggled.connect(lambda on, g=g: on and self._grupo(g)); self.bg.addButton(r); top.addWidget(r)
+        top.addSpacing(16); top.addWidget(QLabel('Resolución'))
+        self.res = QComboBox(); [self.res.addItem(f'×{i}', i) for i in (1, 2, 3, 4)]; self.res.currentIndexChanged.connect(self._zoom); top.addWidget(self.res)
+        top.addStretch(1); lay.addLayout(top)
+        cuerpo = QHBoxLayout()
+        self.g = pg.GraphicsLayoutWidget(); cuerpo.addWidget(self.g, 1)
+        self.valores = QLabel(''); self.valores.setMinimumWidth(190); self.valores.setAlignment(Qt.AlignTop); self.valores.setTextFormat(Qt.RichText)
+        cuerpo.addWidget(self.valores)
+        lay.addLayout(cuerpo, 1)
+
+    def _grupo(self, g):
+        self.grupo = g
+        if self.ex:
+            self.mostrar(self.ex)
 
     def mostrar(self, ex):
-        self.ex = ex; self.clear()
-        M = ex.A.get('minute') or {}
-        if not M:
+        self.ex = ex; self.g.clear(); self.plots = []; self.lineas = []
+        self.S = S = series_tendencia(ex)
+        n = len(S['hr'])
+        if not n:
             return
-        n = len(M.get('hr', []))
-        x = np.arange(n) + 0.5
-        arr = lambda k: np.array([np.nan if v is None else v for v in M.get(k, [])], float)
-        plots = []
+        x = np.arange(n) * 5 + 2.5
+        for k, tit, tipo, col in GRUPOS_TENDENCIA[self.grupo]:
+            if tipo == 'st' and not S['st']:
+                continue
+            p = self.g.addPlot(row=len(self.plots), col=0, axisItems={'bottom': EjeReloj(lambda: self.ex)})
+            p.setLabel('left', tit); p.showGrid(x=True, y=True, alpha=0.25); p.setMouseEnabled(y=False); p.getAxis('left').setWidth(70)
+            if self.plots:
+                p.setXLink(self.plots[0])
+            if tipo == 'bar':
+                p.addItem(pg.BarGraphItem(x=x, height=np.nan_to_num(S[k]), width=4.5, brush=col, pen=None))
+            elif tipo == 'band':
+                f1 = pg.PlotDataItem(x, S['hrmin'], pen=pg.mkPen('#9fb7e3')); f2 = pg.PlotDataItem(x, S['hrmax'], pen=pg.mkPen('#9fb7e3'))
+                p.addItem(pg.FillBetweenItem(f1, f2, brush=pg.mkBrush(31, 95, 191, 50))); p.addItem(f1); p.addItem(f2)
+                p.plot(x, S['hr'], pen=pg.mkPen(col, width=1.6))
+            elif tipo == 'dots':
+                p.plot(x, S[k], pen=None, symbol='o', symbolSize=4, symbolBrush=col)
+            elif tipo == 'st':
+                cols = ['#111111', '#0f766e', '#7c3aed']
+                for c, s in enumerate(S['st']):
+                    p.plot(x[:len(s)], s, pen=pg.mkPen(cols[c % 3], width=1.3))
+            else:
+                p.plot(x, S[k], pen=pg.mkPen(col, width=1.4))
+            ln = pg.InfiniteLine(pos=self.cursor_min, angle=90, movable=True, pen=pg.mkPen('#dc2626', width=1.5))
+            ln.sigDragged.connect(self._arrastre); ln.sigPositionChangeFinished.connect(self._soltar)
+            p.addItem(ln); self.lineas.append(ln)
+            p.scene().sigMouseClicked.connect(self._clic) if not self.plots else None
+            self.plots.append(p)
+        self._zoom(); self._valores()
 
-        def nuevo(titulo, alto=None):
-            p = self.addPlot(row=len(plots), col=0, axisItems={'bottom': EjeReloj(lambda: self.ex)})
-            p.setLabel('left', titulo); p.showGrid(x=True, y=True, alpha=0.25); p.setMouseEnabled(y=False)
-            p.getAxis('left').setWidth(64)
-            if plots:
-                p.setXLink(plots[0])
-            p.scene().sigMouseClicked.connect(self._clic) if not plots else None
-            plots.append(p); return p
+    def _zoom(self, *_):
+        if not self.plots or not self.ex:
+            return
+        z = self.res.currentData() or 1; tot = self.ex.dur / 60; w = tot / z
+        a = min(max(0, self.cursor_min - w / 2), max(0, tot - w))
+        self.plots[0].setXRange(a, a + w, padding=0)
 
-        p = nuevo('FC (lpm)')
-        lo, hi, me = arr('hrMin'), arr('hrMax'), arr('hr')
-        if len(lo):
-            f1 = pg.PlotDataItem(x, lo, pen=pg.mkPen('#9fb7e3')); f2 = pg.PlotDataItem(x, hi, pen=pg.mkPen('#9fb7e3'))
-            p.addItem(pg.FillBetweenItem(f1, f2, brush=pg.mkBrush(31, 95, 191, 50))); p.addItem(f1); p.addItem(f2)
-        p.plot(x, me, pen=pg.mkPen('#1f5fbf', width=1.6))
-        for k, titulo, col in (('v', 'V por minuto', '#c81e1e'), ('s', 'S por minuto', '#1d4ed8')):
-            y = arr(k)
-            if len(y):
-                q = nuevo(titulo); q.addItem(pg.BarGraphItem(x=x, height=np.nan_to_num(y), width=0.9, brush=col, pen=None))
-        y = arr('af')
-        if len(y):
-            q = nuevo('FA (%)'); q.addItem(pg.BarGraphItem(x=x, height=np.nan_to_num(y) * (100 if np.nanmax(np.nan_to_num(y)) <= 1 else 1), width=0.9, brush='#b45309', pen=None))
-        st = M.get('st') or []
-        if st:
-            q = nuevo('ST (µV)')
-            cols = ['#111111', '#0f766e', '#7c3aed']
-            for c, s in enumerate(st):
-                q.plot(x[:len(s)], np.array([np.nan if v is None else v for v in s], float), pen=pg.mkPen(cols[c % 3], width=1.2), name=ex.names[c] if c < len(ex.names) else '')
-        qtc = ex.A.get('qtc')
-        if qtc:
-            q = nuevo('QTc (ms)'); q.plot(x[:len(qtc)], np.array([np.nan if v is None else v for v in qtc], float), pen=None, symbol='o', symbolSize=3, symbolBrush='#374151')
-        for p in plots:
-            p.setXRange(0, n, padding=0)
-        self.plots = plots
+    def _valores(self):
+        S = getattr(self, 'S', None)
+        if not S or not self.ex:
+            return
+        i = int(self.cursor_min // 5)
+        filas = [f'<b>{self.ex.reloj(i * 300, False)} – {self.ex.reloj(i * 300 + 300, False)}</b>']
+        for k, tit, tipo, _ in GRUPOS_TENDENCIA[self.grupo]:
+            if tipo == 'st':
+                for c, s in enumerate(S['st']):
+                    v = s[i] if i < len(s) else np.nan
+                    filas.append(f'ST canal {c + 1}: <b>{fmt(v)}</b> µV')
+                continue
+            arr = S.get(k)
+            v = arr[i] if arr is not None and i < len(arr) else np.nan
+            filas.append(f'{tit}: <b>{fmt(v, 1 if tipo == "line" and k != "rr" else 0)}</b>')
+        self.valores.setText('<br>'.join(filas))
+
+    def set_tiempo(self, t):
+        self.cursor_min = t / 60.0
+        for ln in self.lineas:
+            ln.blockSignals(True); ln.setValue(self.cursor_min); ln.blockSignals(False)
+        self._valores()
+
+    def _arrastre(self, ln):
+        self.cursor_min = max(0.0, ln.value())
+        for o in self.lineas:
+            if o is not ln:
+                o.blockSignals(True); o.setValue(self.cursor_min); o.blockSignals(False)
+        self._valores()
+
+    def _soltar(self, ln):
+        self.ir.emit(self.cursor_min * 60, -1)
 
     def _clic(self, ev):
-        if not self.ex or not getattr(self, 'plots', None):
+        if not self.ex or not self.plots:
             return
         for p in self.plots:
             if p.sceneBoundingRect().contains(ev.scenePos()):
                 m = p.vb.mapSceneToView(ev.scenePos()).x()
-                self.ir.emit(max(0.0, float(m) * 60), -1); return
+                self.set_tiempo(max(0.0, float(m) * 60)); self.ir.emit(max(0.0, float(m) * 60), -1); return
 
 
-# --------------------------------------------------------------------------- Histogramas y Lorenz
+# --------------------------------------------------------------------------- Histogramas
 class VistaHistogramas(QWidget):
     ir = Signal(float, int)
+    nav = Signal(str, list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.ex = None
-        lay = QHBoxLayout(self); lay.setContentsMargins(6, 6, 6, 6)
-        self.g1 = pg.PlotWidget(title='Histograma de RR (latidos normales)'); self.g2 = pg.PlotWidget(title='Diagrama de Lorenz (RRn frente a RRn+1)')
+        self.ex = None; self.modo = 'rr'; self.bins = {}; self.sel = None
+        lay = QVBoxLayout(self); lay.setContentsMargins(6, 6, 6, 6)
+        top = QHBoxLayout(); self.bg = QButtonGroup(self)
+        for k, n in (('rr', 'RR y prematuridad supraventricular'), ('rachas', 'Rachas'), ('estim', 'Estimulados'), ('lorenz', 'Diagrama de Lorenz')):
+            r = QRadioButton(n); r.setChecked(k == 'rr'); r.toggled.connect(lambda on, k=k: on and self._modo(k)); self.bg.addButton(r); top.addWidget(r)
+            if k == 'estim':
+                self.r_estim = r
+        self.info = QLabel('Clic en una columna: va al primer latido · Tab: siguiente · ← →: columna vecina')
+        self.info.setObjectName('ayuda'); top.addSpacing(10); top.addWidget(self.info, 1)
+        lay.addLayout(top)
+        fila = QHBoxLayout(); self.g1 = pg.PlotWidget(); self.g2 = pg.PlotWidget()
         for g in (self.g1, self.g2):
-            g.showGrid(x=True, y=True, alpha=0.25)
-        self.g1.setLabel('bottom', 'RR (ms)'); self.g1.setLabel('left', 'latidos')
-        self.g2.setLabel('bottom', 'RR n (ms)'); self.g2.setLabel('left', 'RR n+1 (ms)'); self.g2.setAspectLocked(True)
-        lay.addWidget(self.g1, 1); lay.addWidget(self.g2, 1)
+            g.showGrid(x=True, y=True, alpha=0.25); g.scene().sigMouseClicked.connect(lambda ev, g=g: self._clic(g, ev)); fila.addWidget(g, 1)
+        lay.addLayout(fila, 1)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def _modo(self, k):
+        self.modo = k
+        if self.ex:
+            self.mostrar(self.ex)
 
     def mostrar(self, ex):
-        self.ex = ex; self.g1.clear(); self.g2.clear()
-        rr = ex.rr * 1000.0; ok = np.isfinite(rr) & (ex.cls == 0)
-        if ok.sum() < 10:
+        self.ex = ex; self.g1.clear(); self.g2.clear(); self.bins = {}
+        S = ex.A.get('settings') or {}
+        self.r_estim.setVisible(bool(np.isin(ex.cls, (9, 12, 13)).any()))
+        ok = np.isfinite(ex.rr) & (ex.cls != 4)
+        if self.modo == 'rr':
+            rr = ex.rr * 1000.0
+            edges = np.arange(200, 3020, 20)
+            self._hist(self.g1, 'g1', 'Intervalos RR (ms)', rr, ok, edges, lambda c: c >= S.get('pauseSec', 2) * 1000 or c < 300, 'RR')
+            pr = ex.prem * 100
+            okp = np.isfinite(pr) & np.isin(ex.cls, (0, 1)) & (pr > 0)
+            self._hist(self.g2, 'g2', 'Prematuridad supraventricular (%)', pr, okp, np.arange(0, 82, 2), lambda c: c >= S.get('svPrematurity', 0.25) * 100, 'Prematuridad')
+        elif self.modo == 'rachas':
+            for g, nombre, tipos, cl in ((self.g1, 'Longitud de las rachas ventriculares (latidos)', ['vPair', 'vt', 'aivr', 'ivr'], 'g1'),
+                                         (self.g2, 'Longitud de las rachas supraventriculares (latidos)', ['sPair', 'svt', 'sRun'], 'g2')):
+                evs = [e for e in ex.eventos if e['type'] in tipos]
+                lens = np.array([e.get('n', 2) for e in evs], float); t0 = np.array([e['t0'] for e in evs], float)
+                b0 = np.array([e.get('b0', -1) for e in evs], int)
+                edges = np.arange(1.5, max(12, int(lens.max()) + 2) + 0.5, 1) if len(lens) else np.arange(1.5, 12.5, 1)
+                g.setTitle(nombre); g.setLabel('bottom', 'latidos'); g.setLabel('left', 'rachas')
+                y, _ = np.histogram(lens, bins=edges)
+                g.addItem(pg.BarGraphItem(x=edges[:-1] + 0.5, height=y, width=0.8, brush='#dc2626' if cl == 'g1' else '#1d4ed8', pen=None))
+                self.bins[cl] = ('rachas', edges, lens, t0, b0, nombre)
+        elif self.modo == 'estim':
+            m = np.isin(ex.cls, (9, 12, 13)) & ok
+            rr = ex.rr * 1000.0
+            self._hist(self.g1, 'g1', 'RR de latidos estimulados (ms)', rr, m, np.arange(200, 2020, 20), lambda c: False, 'RR estimulado')
+            self.g2.setTitle('Sin marcas de espiga de marcapasos en este formato')
+        else:
+            rr = ex.rr * 1000.0; a, b = rr[:-1], rr[1:]
+            good = np.isfinite(a) & np.isfinite(b); idx = np.nonzero(good)[0]
+            if len(idx) > 60000:
+                idx = np.sort(np.random.default_rng(0).choice(idx, 60000, replace=False))
+            brushes = [pg.mkBrush(COLOR_CLASE[int(k)]) for k in ex.cls[idx + 1]]
+            sp = pg.ScatterPlotItem(a[idx], b[idx], size=3, pen=None, brush=brushes, data=idx + 1)
+            sp.sigClicked.connect(lambda _, pts: self.ir.emit(float(ex.t[int(pts[0].data())]), int(pts[0].data())) if len(pts) else None)
+            self.g1.setTitle('Diagrama de Lorenz (RRn frente a RRn+1)'); self.g1.setLabel('bottom', 'RR n (ms)'); self.g1.setLabel('left', 'RR n+1 (ms)')
+            self.g1.addItem(sp); self.g1.setAspectLocked(True)
+            okn = np.isfinite(rr) & (ex.cls == 0)
+            y, e = np.histogram(rr[okn], bins=np.arange(200, 2600, 20))
+            self.g2.setTitle('RR de latidos normales (ms)'); self.g2.addItem(pg.BarGraphItem(x=e[:-1] + 10, height=y, width=18, brush='#1f5fbf', pen=None))
+        if self.modo != 'lorenz':
+            self.g1.setAspectLocked(False)
+
+    def _hist(self, g, cl, titulo, vals, mask, edges, fuera, nombre):
+        g.setTitle(titulo); g.setLabel('left', 'latidos')
+        v = vals[mask]; idx = np.nonzero(mask)[0]
+        y, _ = np.histogram(np.clip(v, edges[0], edges[-1] - 1e-6), bins=edges)
+        cent = (edges[:-1] + edges[1:]) / 2; w = (edges[1] - edges[0]) * 0.9
+        col = ['#dc2626' if fuera(c) else '#1f5fbf' for c in cent]
+        g.addItem(pg.BarGraphItem(x=cent, height=y, width=w, brushes=col, pen=None))
+        self.bins[cl] = ('lat', edges, np.clip(v, edges[0], edges[-1] - 1e-6), None, idx, nombre)
+
+    def _clic(self, g, ev):
+        cl = 'g1' if g is self.g1 else 'g2'
+        if cl not in self.bins or not g.sceneBoundingRect().contains(ev.scenePos()):
             return
-        y, edges = np.histogram(rr[ok], bins=np.arange(200, 2600, 20))
-        self.g1.addItem(pg.BarGraphItem(x=edges[:-1] + 10, height=y, width=18, brush='#1f5fbf', pen=None))
-        a, b = rr[:-1], rr[1:]
-        good = np.isfinite(a) & np.isfinite(b)
-        idx = np.nonzero(good)[0]
-        if len(idx) > 60000:
-            idx = np.sort(np.random.default_rng(0).choice(idx, 60000, replace=False))
-        brushes = [pg.mkBrush(COLOR_CLASE[int(k)]) for k in ex.cls[idx + 1]]
-        sp = pg.ScatterPlotItem(a[idx], b[idx], size=3, pen=None, brush=brushes, data=idx + 1)
-        sp.sigClicked.connect(lambda _, pts: self.ir.emit(float(ex.t[int(pts[0].data())]), int(pts[0].data())) if len(pts) else None)
-        self.g2.addItem(sp)
+        x = g.getPlotItem().vb.mapSceneToView(ev.scenePos()).x()
+        edges = self.bins[cl][1]
+        j = int(np.searchsorted(edges, x) - 1)
+        if 0 <= j < len(edges) - 1:
+            self.sel = (cl, j); self._ir_bin(cl, j)
+
+    def _ir_bin(self, cl, j):
+        kind, edges, vals, t0, idx, nombre = self.bins[cl]
+        m = (vals >= edges[j]) & (vals < edges[j + 1])
+        if kind == 'lat':
+            bs = idx[m]
+            its = [(float(self.ex.t[b]), int(b)) for b in bs[:20000]]
+        else:
+            its = [(float(t), int(b)) for t, b in zip(t0[m], idx[m])]
+        a, b = edges[j], edges[j + 1]
+        self.nav.emit(f'{nombre} {fmt(a)}–{fmt(b)} ({len(its)})', its)
+
+    def keyPressEvent(self, e):
+        if self.sel and e.key() in (Qt.Key_Left, Qt.Key_Right):
+            cl, j = self.sel; edges = self.bins[cl][1]
+            j = int(np.clip(j + (1 if e.key() == Qt.Key_Right else -1), 0, len(edges) - 2)); self.sel = (cl, j); self._ir_bin(cl, j)
+        else:
+            super().keyPressEvent(e)
 
 
-# --------------------------------------------------------------------------- Criterios
+# --------------------------------------------------------------------------- Criterios de escaneo
 class VistaCriterios(QWidget):
     aplicar = Signal(dict)
+    reescanear = Signal()
 
-    CAMPOS = [('pauseSec', 'Pausa: RR mayor que (s)', 2.0, 1.0, 6.0, 0.1), ('bradyBpm', 'Bradicardia bajo (lpm)', 50, 20, 80, 1),
-              ('tachyBpm', 'Taquicardia sobre (lpm)', 100, 80, 200, 1), ('vtBpm', 'TV: frecuencia mínima (lpm)', 100, 60, 250, 1),
-              ('vtBeats', 'TV: latidos mínimos', 3, 3, 20, 1), ('svtBpm', 'TSV: frecuencia mínima (lpm)', 100, 60, 250, 1),
-              ('svtBeats', 'TSV: latidos mínimos', 3, 3, 20, 1), ('svPrematurity', 'Supraventricular: prematuridad mínima (fracción)', 0.25, 0.05, 0.6, 0.01),
-              ('minRateDurSec', 'Bradi/taqui: duración mínima (s)', 30, 5, 600, 5), ('stThreshUv', 'ST: umbral (µV)', 100, 50, 300, 10),
-              ('stPointMs', 'ST: medido en J + (ms)', 60, 40, 120, 20)]
+    CAMPOS = [('svPrematurity', 'Supraventricular: prematuridad mínima (fracción)', 0.25, 0.05, 0.6, 0.01),
+              ('pauseSec', 'Pausa: RR mayor que (s)', 2.0, 1.0, 6.0, 0.1),
+              ('stDepUv', 'Descenso del ST (µV)', 100, 50, 400, 10), ('stEleUv', 'Elevación del ST (µV)', 100, 50, 400, 10),
+              ('stPointMs', 'ST medido en J + (ms)', 60, 40, 120, 20),
+              ('tachyBpm', 'Taquicardia sobre (lpm)', 100, 80, 200, 1), ('bradyBpm', 'Bradicardia bajo (lpm)', 50, 20, 80, 1),
+              ('minRateDurSec', 'Bradi/taqui: duración mínima (s)', 30, 5, 3600, 5),
+              ('vtBpm', 'TV: frecuencia mínima (lpm)', 100, 60, 250, 1), ('vtBeats', 'TV: latidos consecutivos', 3, 3, 20, 1),
+              ('svtBpm', 'TSV: frecuencia mínima (lpm)', 100, 60, 250, 1), ('svtBeats', 'TSV: latidos consecutivos', 3, 3, 20, 1),
+              ('pacerRate', 'Marcapasos: frecuencia programada (lpm)', 60, 30, 150, 1)]
+    CASILLAS = [('pauseNNOnly', 'La pausa se mide solo entre latidos normales (N a N)', False),
+                ('afDetect', 'Detectar automáticamente la fibrilación auricular', True),
+                ('svTemplates', 'Habilitar el grupo de plantillas supraventricular', True),
+                ('hrvNormalOnly', 'VFC solo con latidos normales (si no, normales y supraventriculares)', True),
+                ('hrNormalOnly', 'Frecuencia cardíaca solo con latidos normales', False),
+                ('hrExcludePauses', 'Excluir las pausas del cálculo de la frecuencia cardíaca', False),
+                ('pacing', 'Análisis de marcapasos activado', False)]
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        lay = QVBoxLayout(self); lay.setContentsMargins(10, 10, 10, 10)
-        g = QGroupBox('Criterios de análisis'); f = QFormLayout(g)
+        lay = QHBoxLayout(self); lay.setContentsMargins(10, 10, 10, 10)
+        g = QGroupBox('Criterios de escaneo'); f = QFormLayout(g)
         self.w = {}
         for k, lbl, d, lo, hi, st in self.CAMPOS:
             s = QDoubleSpinBox() if isinstance(st, float) else QSpinBox()
@@ -389,24 +569,41 @@ class VistaCriterios(QWidget):
             if isinstance(s, QDoubleSpinBox):
                 s.setDecimals(2)
             s.setValue(d); self.w[k] = s; f.addRow(lbl, s)
-        self.qtc = QComboBox(); [self.qtc.addItem(n, k) for k, n in (('bazett', 'Bazett'), ('fridericia', 'Fridericia'), ('framingham', 'Framingham'), ('hodges', 'Hodges'))]
+        self.qtc = QComboBox(); [self.qtc.addItem(n, k) for k, n in (('bazett', 'Bazett'), ('fridericia', 'Fridericia'), ('framingham', 'Lineal (Framingham)'), ('hodges', 'Hodges'))]
         f.addRow('Fórmula del QTc', self.qtc)
-        self.af = QCheckBox('Detectar fibrilación auricular'); self.af.setChecked(True); f.addRow('', self.af)
+        f.addRow('RR para el QTc', QLabel('RR medio de cada minuto (el QT se mide sobre el latido promedio del minuto)'))
         lay.addWidget(g)
+        der = QVBoxLayout(); g2 = QGroupBox('Opciones'); v = QVBoxLayout(g2); self.c = {}
+        for k, lbl, d in self.CASILLAS:
+            c = QCheckBox(lbl); c.setChecked(d); self.c[k] = c; v.addWidget(c)
+        der.addWidget(g2)
         b = QPushButton('Aplicar criterios y recalcular'); b.setObjectName('primario'); b.clicked.connect(self._ap)
-        lay.addWidget(b, 0, Qt.AlignLeft); lay.addStretch(1)
+        b2 = QPushButton('Volver a escanear (excluir canales o acortar)…'); b2.clicked.connect(self.reescanear.emit)
+        der.addWidget(b); der.addWidget(b2)
+        der.addWidget(QLabel('Los cambios valen para este paciente y se guardan con el examen.'))
+        der.addStretch(1); lay.addLayout(der)
 
     def cargar(self, s):
         for k, w in self.w.items():
-            if k in s and s[k] is not None:
-                w.setValue(s[k])
+            v = s.get(k)
+            if k in ('stDepUv', 'stEleUv') and not v:
+                v = s.get('stThreshUv')
+            if v is not None:
+                w.setValue(v)
         i = self.qtc.findData(s.get('qtcFormula', 'bazett')); self.qtc.setCurrentIndex(max(0, i))
-        self.af.setChecked(bool(s.get('afDetect', True)))
+        for k, c in self.c.items():
+            if k in s:
+                c.setChecked(bool(s[k]))
+
+    def valores(self):
+        d = {k: w.value() for k, w in self.w.items()}
+        d['stThreshUv'] = min(d['stDepUv'], d['stEleUv'])
+        d['qtcFormula'] = self.qtc.currentData()
+        d.update({k: c.isChecked() for k, c in self.c.items()})
+        return d
 
     def _ap(self):
-        d = {k: w.value() for k, w in self.w.items()}
-        d['qtcFormula'] = self.qtc.currentData(); d['afDetect'] = self.af.isChecked()
-        self.aplicar.emit(d)
+        self.aplicar.emit(self.valores())
 
 
 # --------------------------------------------------------------------------- Validación con anotaciones de referencia
@@ -440,7 +637,7 @@ class VistaValidacion(QTextBrowser):
         tp = int((mr >= 0).sum()); fn = len(rt) - tp; fp = int((md < 0).sum())
         rows = [('Detección de latidos', tp / max(1, tp + fn), tp / max(1, tp + fp), len(rt))]
         rv = np.array([s in 'VE' for s in sym]); rs = np.array([s in 'AaJS' for s in sym])
-        dv = np.isin(dc, (2, 8)); ds = dc == 1
+        dv = np.isin(dc, (2, 8, 10, 11)); ds = dc == 1
         for nombre, R, D in (('Ventriculares', rv, dv), ('Supraventriculares', rs, ds)):
             m = mr >= 0
             tpk = int((R & m & D[np.clip(mr, 0, None)]).sum())
