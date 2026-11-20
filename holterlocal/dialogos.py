@@ -38,7 +38,7 @@ class DialogoPaciente(QDialog):
             else:
                 w = QLineEdit(datos.get(k, ''))
                 if k == 'grabadora_tipo' and not datos.get(k):
-                    w.setText('H3+ (3 canales)')
+                    w.setText('Holter de 3 canales')
             self.w[k] = w; g.addWidget(QLabel(n), i // 2, (i % 2) * 2); g.addWidget(w, i // 2, (i % 2) * 2 + 1)
         lay.addLayout(g); _botones(self, lay)
 
@@ -215,6 +215,8 @@ class DialogoBuscar(QDialog):
         fila.addWidget(self.q, 1); self.chk = {}
         for e in ['Adquirido', 'Editado', 'Revisado', 'Firmado']:
             c = QCheckBox(e); c.setChecked(True); c.toggled.connect(self._pinta); self.chk[e] = c; fila.addWidget(c)
+        self.cuando = QComboBox(); self.cuando.addItems(['Todos', 'Hoy', 'Última semana']); self.cuando.currentIndexChanged.connect(self._pinta)
+        fila.addWidget(self.cuando)
         b = QPushButton('Buscar'); b.clicked.connect(self._pinta); fila.addWidget(b)
         lay.addLayout(fila)
         self.t = QTableWidget(0, len(self.COLS)); self.t.setHorizontalHeaderLabels(self.COLS); self.t.setSortingEnabled(True)
@@ -230,11 +232,15 @@ class DialogoBuscar(QDialog):
 
     def _pinta(self):
         q = self.q.text().strip().lower()
+        import time
+        desde = time.strftime('%Y-%m-%d', time.localtime(time.time() - (0 if self.cuando.currentIndex() == 1 else 6 * 86400)))
         self.t.setSortingEnabled(False); self.t.setRowCount(0)
         for k, it in sorted(self.reg.items.items(), key=lambda x: x[1].get('modificado', ''), reverse=True):
             if not self.chk.get(it.get('estado', 'Adquirido'), self.chk['Adquirido']).isChecked():
                 continue
             if q and not any(str(it.get(c, '')).lower().startswith(q) for c in ('apellido', 'nombres', 'id', 'nombre')):
+                continue
+            if self.cuando.currentIndex() and str(it.get('modificado', '')) < desde:
                 continue
             r = self.t.rowCount(); self.t.insertRow(r)
             for j, v in enumerate([it.get('apellido', ''), it.get('nombres', ''), it.get('id', ''), it.get('nombre', '') or os.path.basename(it.get('ruta', '')),

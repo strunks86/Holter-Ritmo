@@ -23,6 +23,8 @@ VACIA = {
     'ediciones': [],            # [t, clase] de latidos corregidos o insertados
     'combinadas': [], 'firma': '',
     'exclusiones': [],          # [t0, t1] marcados como artefacto
+    'inclusiones': [],          # [t0, t1] artefactos automáticos que el usuario devolvió al análisis
+    'origen': {},
     'af_usuario': [],           # [t0, t1, 1 agrega | 0 quita]
     'criterios': None,
     'reescaneo': {},            # canales excluidos y duración acortada
@@ -83,19 +85,20 @@ class Sesion:
         idx = np.nonzero(ex.edited == 1)[0]
         self.d['ediciones'] = [[round(float(ex.t[b]), 4), int(ex.cls[b])] for b in idx]
         self.d['exclusiones'] = [list(map(float, e)) for e in (ex.A.get('exclusions') or [])]
+        self.d['inclusiones'] = [list(map(float, e)) for e in (ex.A.get('inclusions') or [])]
         self.d['af_usuario'] = [list(map(float, e)) for e in (ex.A.get('afUser') or [])]
 
     def hay_ediciones(self):
         d = self.d
-        return bool(d['ediciones'] or d['borrados'] or d['exclusiones'] or d['af_usuario'] or d['combinadas'])
+        return bool(d['ediciones'] or d['borrados'] or d['exclusiones'] or d.get('inclusiones') or d['af_usuario'] or d['combinadas'])
 
     def peticion_replay(self):
         d = self.d
         return {'edits': d['ediciones'], 'del': d['borrados'], 'merges': d['combinadas'], 'firma': d.get('firma', ''),
-                'exclusions': d['exclusiones'], 'afUser': d['af_usuario']}
+                'exclusions': d['exclusiones'], 'inclusions': d.get('inclusiones', []), 'afUser': d['af_usuario']}
 
     def olvidar_ediciones(self):
-        for k in ('ediciones', 'borrados', 'combinadas', 'exclusiones', 'af_usuario', 'resumen_override', 'perfil_override',
+        for k in ('ediciones', 'borrados', 'combinadas', 'exclusiones', 'inclusiones', 'af_usuario', 'resumen_override', 'perfil_override',
                   'perfil_cols_off', 'ocultos', 'st_edit'):
             self.d[k] = copy.deepcopy(VACIA[k])
         self.d['tiras'] = [t for t in self.d['tiras'] if not t.get('auto')]
@@ -115,7 +118,7 @@ class Registro:
     def anotar(self, ses, ex=None):
         p = ses.d.get('paciente') or {}
         it = self.items.get(ses.clave, {})
-        it.update({'ruta': ses.ruta, 'nombre': ses.nombre or it.get('nombre', ''), 'apellido': p.get('apellido', ''),
+        it.update({'ruta': ses.ruta, 'origen': ses.d.get('origen', {}), 'nombre': ses.nombre or it.get('nombre', ''), 'apellido': p.get('apellido', ''),
                    'nombres': p.get('nombre', ''), 'id': p.get('id', ''), 'estado': ses.d.get('estado', 'Adquirido'),
                    'modificado': time.strftime('%Y-%m-%d %H:%M')})
         if ex is not None:

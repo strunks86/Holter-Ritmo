@@ -45,7 +45,7 @@ function summaryOut() {
   const strip = o => { const r = {}; for (const k in o) { const v = o[k]; if (ArrayBuffer.isView(v)) continue; r[k] = v; } return r; };
   const hrv = Object.assign({}, R.hrv); delete hrv.specRows; delete hrv.seg; delete hrv.spec;
   return {
-    files, minute, exclusions: A.exclusions || [], afUser: A.afUser || [], nDeleted: A.nDeleted || 0, templates, tcls, morphM: E.MORPH, nch: A.nch, chans: A.chans, chanNames: A.chanNames, fs: A.fs, nsec: A.nsec, dur: A.dur, start: A.start, name: A.name, source: A.source,
+    files, minute, firma: firma(), exclusions: A.exclusions || [], inclusions: A.inclusions || [], afUser: A.afUser || [], nDeleted: A.nDeleted || 0, templates, tcls, morphM: E.MORPH, nch: A.nch, chans: A.chans, chanNames: A.chanNames, fs: A.fs, nsec: A.nsec, dur: A.dur, start: A.start, name: A.name, source: A.source,
     events: R.events, counts: Array.from(R.counts), total: R.total, vTot: R.vTot, sTot: R.sTot, cnt: R.cnt, rOnT: R.rOnT, interp: R.interp, vBurden: R.vBurden, sBurden: R.sBurden,
     analyzedSec: R.analyzedSec, exSec: R.exSec, exPct: R.exPct, hr: R.hr, rrMax: R.rrMax, rrMaxB: R.rrMaxB, rrMin: R.rrMin, pauses: R.pauses, af: R.af, qt: R.qt, stRef: R.stRef, stEpisodes: R.stEpisodes,
     hours: R.hours.map(strip), hrv, settings: R.settings, qtc: Array.from(R.qtc, v => (v === v ? v : null)),
@@ -142,7 +142,7 @@ const H = {
   relabelTemplates(m) { const S = new Set(m.tids); const B = A.beats; for (let b = 0; b < B.n; b++) if (S.has(B.tid[b])) { B.cls[b] = m.cls; B.edited[b] = 1; } return { A: summaryOut() }; },
   mergeTemplates(m) { mergeTemplates(m.tids); return { A: summaryOut() }; },
   deleteTemplateBeats(m) { const S = new Set(m.tids); const B = A.beats; const del = []; for (let b = 0; b < B.n; b++) if (S.has(B.tid[b])) del.push(b); deleteBeats(del); return { A: summaryOut() }; },
-  setExclusions(m) { A.exclusions = m.list || []; return { A: summaryOut() }; },
+  setExclusions(m) { A.exclusions = m.list || []; if (m.incl) A.inclusions = m.incl; return { A: summaryOut() }; },
   setAf(m) { A.afUser = m.list || []; return { A: summaryOut() }; },
   /* Reaplica lo guardado de un examen: borrados, etiquetas manuales (o latidos insertados), combinaciones, artefactos y FA. */
   replay(m) {
@@ -150,12 +150,12 @@ const H = {
     if (m.del && m.del.length) { const B = A.beats; const idx = []; for (const t of m.del) { const b = nearest(t, 0.05); if (b >= 0) idx.push(b); } nDel = idx.length; deleteBeats(idx); }
     if (m.edits) for (const [t, c] of m.edits) { const b = nearest(t, 0.05); if (b >= 0) { A.beats.cls[b] = c; A.beats.edited[b] = 1; nRel++; } else { insertBeat(t, c); nIns++; } }
     if (m.merges && m.firma === firma()) for (const g of m.merges) mergeTemplates(g);
-    if (m.exclusions) A.exclusions = m.exclusions;
+    if (m.exclusions) A.exclusions = m.exclusions; if (m.inclusions) A.inclusions = m.inclusions;
     if (m.afUser) A.afUser = m.afUser;
     const R = summaryOut(); R.replay = { nDel, nRel, nIns }; return { A: R };
   },
   firma() { return { firma: firma() }; },
-  resetEdits() { const B = A.beats; B.edited.fill(0); A.exclusions = []; A.afUser = []; return { A: summaryOut() }; },
+  resetEdits() { const B = A.beats; B.edited.fill(0); A.exclusions = []; A.inclusions = []; A.afUser = []; return { A: summaryOut() }; },
   exclude(m) { A.exclusions = (A.exclusions || []).concat([[m.t0, m.t1]]); return { A: summaryOut() }; },
   settings(m) { SET = Object.assign({}, SET, m.settings || {}); return { A: summaryOut() }; },
   defaults() { return { defaults: E.DEFAULTS, version: E.VERSION }; },
