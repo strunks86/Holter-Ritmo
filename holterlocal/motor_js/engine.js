@@ -502,7 +502,8 @@ function detectQrs(F, fsA, P, segCls) {
 E.DEFAULTS = {
   th: 0.30,
   svPrematurity: 0.25, pauseSec: 2.0, tachyBpm: 100, bradyBpm: 50, vtBpm: 100, vtBeats: 3, svtBpm: 100, svtBeats: 3,
-  minRateDurSec: 30, stThreshUv: 100, stPointMs: 60, qtcFormula: 'bazett', afDetect: true, hrvNormalOnly: true
+  minRateDurSec: 30, stThreshUv: 100, stPointMs: 60, qtcFormula: 'bazett', afDetect: true, hrvNormalOnly: true,
+  stDepUv: 0, stEleUv: 0, pauseNNOnly: false, hrNormalOnly: false, hrExcludePauses: false, pacing: false, pacerRate: 60
 };
 
 E.pass1 = function (rec, opt, progress) {
@@ -752,10 +753,11 @@ E.pickChannels = pickChannels;
 
 /* ------------------------------------------------------------------ clasificador de latidos (árboles potenciados entrenados con datos públicos) */
 E.CLS = { N: 0, S: 1, V: 2, F: 3, X: 4, Q: 5, B: 6, A: 7, E: 8, P: 9 };
-E.CLS_SYM = ['N', 'S', 'V', 'F', 'X', 'Q', 'B', 'A', 'E', 'P'];
-E.CLS_NAME = ['Normal', 'Supraventricular', 'Ventricular', 'Fusión', 'Artefacto', 'No clasificable', 'Bloqueo de rama', 'Aberrante', 'Escape ventricular', 'Estimulado'];
+E.CLS_SYM = ['N', 'S', 'V', 'F', 'X', 'Q', 'B', 'A', 'E', 'P', 'R', 'I', 'C', 'D'];
+E.CLS_NAME = ['Normal', 'Supraventricular', 'Ventricular', 'Fusión', 'Artefacto', 'Desconocido', 'Bloqueo de rama', 'Aberrante', 'Escape ventricular', 'Ventricular estimulado', 'R sobre T', 'Interpolado', 'Auricular estimulado', 'Estimulado doble'];
+E.NCLS = 14;
 /* clases que cuentan como latido de origen supraventricular con conducción propia (para ritmo y VFC) */
-E.isVentricular = c => c === 2 || c === 3 || c === 8;
+E.isVentricular = c => c === 2 || c === 3 || c === 8 || c === 10 || c === 11;
 E.isBeat = c => c !== 4;
 
 function compileGbm(m) {
@@ -997,7 +999,8 @@ E.summarize = function (A, S0) {
     }
     lastB = b; sawX = false;
   }
-  const supra = c => c === 0 || c === 1 || c === 6 || c === 7; const vent = E.isVentricular;
+  const supra = c => c === 0 || c === 1 || c === 6 || c === 7 || c === 12; const vent = E.isVentricular;
+  const normal = c => c === 0 || c === 6 || c === 12;
   // RR de referencia: mediana de hasta 8 intervalos válidos previos entre latidos de conducción normal
   const rrRef = new Float32Array(nb).fill(NaN); { const q = []; for (let b = 0; b < nb; b++) { if (q.length >= 3) rrRef[b] = median(q); if (rr[b] === rr[b] && supra(cls[b]) && prevIdx[b] >= 0 && supra(cls[prevIdx[b]]) && rr[b] < 2.5) { q.push(rr[b]); if (q.length > 8) q.shift(); } } }
   // fibrilación auricular
@@ -1015,8 +1018,9 @@ E.summarize = function (A, S0) {
     }
     for (const ep of afEpisodes) for (let b = ep[0]; b <= ep[1]; b++) afBeat[b] = 1;
   }
-  if (A.afManual) for (const e of A.afManual) { let b0 = lowerBound(t, e[0]), b1 = lowerBound(t, e[1]) - 1; if (b1 > b0) { if (e[2] === 0) { for (let b = b0; b <= b1; b++) afBeat[b] = 0; } else { for (let b = b0; b <= b1; b++) afBeat[b] = 1; } } }
-  if (A.afManual && A.afManual.length) { afEpisodes = []; let st = -1; for (let b = 0; b <= nb; b++) { const v = b < nb && afBeat[b]; if (v && st < 0) st = b; else if (!v && st >= 0) { afEpisodes.push([st, b - 1]); st = -1; } } }
+  const afMan = (A.afManual || []).concat(A.afUser || []);
+  if (afMan.length) for (const e of afMan) { let b0 = lowerBound(t, e[0]), b1 = lowerBound(t, e[1]) - 1; if (b1 > b0) { if (e[2] === 0) { for (let b = b0; b <= b1; b++) afBeat[b] = 0; } else { for (let b = b0; b <= b1; b++) afBeat[b] = 1; } } }
+  if (afMan.length) { afEpisodes = []; let st = -1; for (let b = 0; b <= nb; b++) { const v = b < nb && afBeat[b]; if (v && st < 0) st = b; else if (!v && st >= 0) { afEpisodes.push([st, b - 1]); st = -1; } } }
   // extrasístoles supraventriculares: latido de morfología normal adelantado, fuera de fibrilación auricular
   const prem = new Float32Array(nb).fill(NaN); let runRef = NaN;
   for (let b = 0; b < nb; b++) {
@@ -1064,7 +1068,9 @@ E.summarize = function (A, S0) {
   // R sobre T e interpoladas
   let rOnT = 0, interp = 0;
   for (let i = 1; i < ns - 1; i++) {
-    if (kind[i] !== 2 || kind[i - 1] === 2) continue; const b = seq[i]; const r = rr[b], ref = rrRef[b]; if (!(r === r) || !(ref === ref)) continue;
+    if (kind[i] !== 2) continue; const b = seq[i];
+    if (cls[b] === 10) { rOnT++; add('rOnT', b, b, { manual: 1 }); continue; } if (cls[b] === 11) { interp++; add('interp', b, b, { manual: 1 }); continue; }
+    if (kind[i - 1] === 2) continue; const r = rr[b], ref = rrRef[b]; if (!(r === r) || !(ref === ref)) continue;
     const qtEst = 0.39 * Math.sqrt(ref); // QT esperado (Bazett con QTc de 390 ms)
     if (r < 0.85 * qtEst + 0.04) { rOnT++; add('rOnT', b, b, { coupling: r }); }
     const rn = rr[seq[i + 1]]; if (rn === rn && kind[i + 1] === 0 && Math.abs((r + rn) - ref) < 0.15 * ref) { interp++; add('interp', b, b); }
@@ -1074,10 +1080,10 @@ E.summarize = function (A, S0) {
   for (let b = 0; b < nb; b++) {
     const r = rr[b]; if (!(r === r)) continue;
     if (r > rrMax) { rrMax = r; rrMaxB = b; } if (r < rrMin && supra(cls[b])) { rrMin = r; rrMinB = b; }
-    if (r >= S.pauseSec) { const pb = prevIdx[b]; const after = vent(cls[pb]) ? 'posextrasistólica ventricular' : cls[pb] === 1 ? 'posextrasistólica supraventricular' : afBeat[b] ? 'en fibrilación auricular' : ''; const ref = rrRef[pb]; const dbl = ref === ref && r > 1.8 * ref && r < 2.25 * ref; pauses.push(add('pause', pb, b, { rr: r, after, dbl })); }
+    if (r >= S.pauseSec && (!S.pauseNNOnly || (normal(cls[b]) && normal(cls[prevIdx[b]])))) { const pb = prevIdx[b]; const after = vent(cls[pb]) ? 'posextrasistólica ventricular' : cls[pb] === 1 ? 'posextrasistólica supraventricular' : afBeat[b] ? 'en fibrilación auricular' : ''; const ref = rrRef[pb]; const dbl = ref === ref && r > 1.8 * ref && r < 2.25 * ref; pauses.push(add('pause', pb, b, { rr: r, after, dbl })); }
   }
   // frecuencia cardíaca: promedio de 8 intervalos; mínimos, máximos, bradicardia y taquicardia
-  const hr8 = new Float32Array(nb).fill(NaN); { const q = []; let sum = 0; for (let b = 0; b < nb; b++) { const r = rr[b]; if (cls[b] === 4) continue; if (!(r === r)) { q.length = 0; sum = 0; continue; } q.push(r); sum += r; if (q.length > 8) sum -= q.shift(); if (q.length === 8) hr8[b] = 60 * 8 / sum; } }
+  const hr8 = new Float32Array(nb).fill(NaN); { const q = []; let sum = 0; for (let b = 0; b < nb; b++) { const r = rr[b]; if (cls[b] === 4) continue; if (!(r === r)) { q.length = 0; sum = 0; continue; } if (S.hrNormalOnly && !(normal(cls[b]) && normal(cls[prevIdx[b]]))) continue; if (S.hrExcludePauses && r >= S.pauseSec) continue; q.push(r); sum += r; if (q.length > 8) sum -= q.shift(); if (q.length === 8) hr8[b] = 60 * 8 / sum; } }
   let hrMin = 999, hrMinB = -1, hrMax = 0, hrMaxB = -1; for (let b = 0; b < nb; b++) { const h = hr8[b]; if (!(h === h)) continue; if (h < hrMin) { hrMin = h; hrMinB = b; } if (h > hrMax) { hrMax = h; hrMaxB = b; } }
   const rateEpisodes = (test, name) => { let st = -1, ext = 0; for (let b = 0; b <= nb; b++) { const h = b < nb ? hr8[b] : NaN; if (b < nb && cls[b] === 4) continue; const inside = h === h && test(h);
       if (inside) { if (st < 0) { st = b; ext = h; } else if (name === 'tachy' ? h > ext : h < ext) ext = h; }
@@ -1104,7 +1110,7 @@ E.summarize = function (A, S0) {
       if (b < nb && cls[b] === 0 && src[b] > -30000) bucket.push(src[b]);
     }
     M.st.push(arr); const valid = []; for (let i = 0; i < nmin; i++) if (arr[i] === arr[i]) valid.push(arr[i]); const ref = valid.length ? median(valid) : 0; stRef.push(ref);
-    let st0 = -1, ext = 0; for (let i = 0; i <= nmin; i++) { const v = i < nmin ? arr[i] - ref : NaN; const dev = v === v && Math.abs(v) >= S.stThreshUv;
+    let st0 = -1, ext = 0; for (let i = 0; i <= nmin; i++) { const v = i < nmin ? arr[i] - ref : NaN; const dev = v === v && (v < 0 ? -v >= (S.stDepUv || S.stThreshUv) : v >= (S.stEleUv || S.stThreshUv));
       if (dev) { if (st0 < 0) { st0 = i; ext = v; } else if (Math.abs(v) > Math.abs(ext)) ext = v; }
       else if (st0 >= 0 && !(i < nmin && !(v === v) && i - st0 < 3)) { if (i - st0 >= 1) { const e = { type: ext < 0 ? 'stDep' : 'stEle', ch: c, t0: st0 * 60, t1: i * 60, b0: lowerBound(t, st0 * 60), b1: Math.max(0, lowerBound(t, i * 60) - 1), n: 0, dur: (i - st0) * 60, level: ext }; ev.push(e); stEpisodes.push(e); } st0 = -1; } }
   }
@@ -1130,10 +1136,10 @@ E.summarize = function (A, S0) {
     qtc[mi] = c; qn++; qs += c; qtS += q; if (c < qmin) qmin = c; if (c > qmax) { qmax = c; qmaxM = mi; } if (c > 450) q450++; if (c > 480) q480++; if (c > 500) q500++; }
   for (let h = 0; h < nhour; h++) { const a = []; for (let mi = h * 60; mi < Math.min(nmin, h * 60 + 60); mi++) if (qtc[mi] === qtc[mi]) a.push(qtc[mi]); if (a.length >= 5) hours[h].qtc = median(a); }
   // totales
-  const counts = new Uint32Array(10); for (let b = 0; b < nb; b++) counts[cls[b]]++;
-  const total = nb - counts[4]; const vTot = counts[2] + counts[3] + counts[8], sTot = counts[1];
+  const counts = new Uint32Array(E.NCLS); for (let b = 0; b < nb; b++) counts[cls[b]]++;
+  const total = nb - counts[4]; const vTot = counts[2] + counts[3] + counts[8] + counts[10] + counts[11], sTot = counts[1];
   let exSec = 0; for (let s = 0; s < nsec; s++) if (excl[s]) exSec++;
-  let sumRR = 0, nRR = 0; for (let b = 0; b < nb; b++) if (rr[b] === rr[b]) { sumRR += rr[b]; nRR++; }
+  let sumRR = 0, nRR = 0; for (let b = 0; b < nb; b++) if (rr[b] === rr[b] && !(S.hrNormalOnly && !(normal(cls[b]) && normal(cls[prevIdx[b]]))) && !(S.hrExcludePauses && rr[b] >= S.pauseSec)) { sumRR += rr[b]; nRR++; }
   let afSec = 0, afLong = 0; for (const e of ev) if (e.type === 'af') { afSec += e.dur; if (e.dur > afLong) afLong = e.dur; }
   // día y noche (23:00 a 07:00) si se conoce la hora de inicio
   let dayS = 0, dayN = 0, nightS = 0, nightN = 0; if (A.start) for (let mi = 0; mi < nmin; mi++) { const h = M.hr[mi]; if (!(h === h)) continue; const hod = Math.floor((clockOf(A, mi * 60) % 86400) / 3600); if (hod >= 23 || hod < 7) { nightS += h; nightN++; } else { dayS += h; dayN++; } }

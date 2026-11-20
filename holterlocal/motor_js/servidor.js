@@ -38,13 +38,14 @@ function summaryOut() {
   };
   A.qual.forEach((q, i) => { files['qual' + i] = dump('qual' + i + '.bin', q); });
   const M = R.minute; const minute = {}; for (const k in M) { if (ArrayBuffer.isView(M[k])) minute[k] = Array.from(M[k], v => (v === v ? v : null)); }
+  minute.qt = A.qt ? Array.from(A.qt.qt, v => (v === v ? v : null)) : [];
   minute.st = M.st ? M.st.map(a => Array.from(a, v => (v === v && v !== -32768 ? v : null))) : [];
   const templates = A.templates.map(T => { const n = T.wave.length; return { id: T.id, count: T.count, width: T.width, pV: T.pV, pX: T.pX, wave: Array.from(T.wave) }; });
-  const tcls = A.templates.map(() => new Array(10).fill(0)); for (let b = 0; b < B.n; b++) { const k = B.tid[b]; if (k >= 0 && k < tcls.length) tcls[k][B.cls[b]]++; }
+  const tcls = A.templates.map(() => new Array(E.NCLS).fill(0)); for (let b = 0; b < B.n; b++) { const k = B.tid[b]; if (k >= 0 && k < tcls.length) tcls[k][B.cls[b]]++; }
   const strip = o => { const r = {}; for (const k in o) { const v = o[k]; if (ArrayBuffer.isView(v)) continue; r[k] = v; } return r; };
   const hrv = Object.assign({}, R.hrv); delete hrv.specRows; delete hrv.seg; delete hrv.spec;
   return {
-    files, minute, templates, tcls, morphM: E.MORPH, nch: A.nch, chans: A.chans, chanNames: A.chanNames, fs: A.fs, nsec: A.nsec, dur: A.dur, start: A.start, name: A.name, source: A.source,
+    files, minute, exclusions: A.exclusions || [], afUser: A.afUser || [], nDeleted: A.nDeleted || 0, templates, tcls, morphM: E.MORPH, nch: A.nch, chans: A.chans, chanNames: A.chanNames, fs: A.fs, nsec: A.nsec, dur: A.dur, start: A.start, name: A.name, source: A.source,
     events: R.events, counts: Array.from(R.counts), total: R.total, vTot: R.vTot, sTot: R.sTot, cnt: R.cnt, rOnT: R.rOnT, interp: R.interp, vBurden: R.vBurden, sBurden: R.sBurden,
     analyzedSec: R.analyzedSec, exSec: R.exSec, exPct: R.exPct, hr: R.hr, rrMax: R.rrMax, rrMaxB: R.rrMaxB, rrMin: R.rrMin, pauses: R.pauses, af: R.af, qt: R.qt, stRef: R.stRef, stEpisodes: R.stEpisodes,
     hours: R.hours.map(strip), hrv, settings: R.settings, qtc: Array.from(R.qtc, v => (v === v ? v : null)),
@@ -52,10 +53,37 @@ function summaryOut() {
   };
 }
 
+
+/* ---- utilidades de edición: los arreglos por latido se reconstruyen al insertar o borrar */
+function lowerIdx(t) { return E.lowerBound(A.beats.t, t); }
+function nearest(t, tol) { const T = A.beats.t; const i = E.lowerBound(T, t); let best = -1, bd = tol; for (const j of [i - 1, i]) if (j >= 0 && j < T.length && Math.abs(T[j] - t) <= bd) { best = j; bd = Math.abs(T[j] - t); } return best; }
+function firma() { return A.beats.n + ':' + A.templates.length + ':' + (A.extMotor || 'estacion'); }
+function perBeatKeys(B) { const ks = []; for (const k in B) { const v = B[k]; if (ArrayBuffer.isView(v) && v.length === B.n && k !== 'X') ks.push(k); } return ks; }
+function insertBeat(t, c) {
+  const B = A.beats; const i = E.lowerBound(B.t, t); const n = B.n;
+  const ins = (arr, v) => { const o = new arr.constructor(n + 1); o.set(arr.subarray(0, i), 0); o[i] = v; o.set(arr.subarray(i), i + 1); return o; };
+  const defs = { t, samp: Math.round(t * A.fs), cls: c, auto: c, conf: 1, pV: 0, pS: 0, pX: 0, tid: -1, tcorr: 0, edited: 1 };
+  for (const k of perBeatKeys(B)) B[k] = ins(B[k], k in defs ? defs[k] : 0);
+  B.st = B.st.map(a => ins(a, -32768)); B.n = n + 1;
+}
+function deleteBeats(list) {
+  const B = A.beats; const n = B.n; const kill = new Uint8Array(n); let nk = 0; for (const b of list) if (b >= 0 && b < n && !kill[b]) { kill[b] = 1; nk++; }
+  if (!nk) return; const m = n - nk;
+  const del = arr => { const o = new arr.constructor(m); let j = 0; for (let b = 0; b < n; b++) if (!kill[b]) o[j++] = arr[b]; return o; };
+  for (const k of perBeatKeys(B)) B[k] = del(B[k]);
+  B.st = B.st.map(del); B.n = m; A.nDeleted = (A.nDeleted || 0) + nk;
+}
+function mergeTemplates(tids) {
+  if (!tids || tids.length < 2) return; const dst = tids[0]; const S = new Set(tids.slice(1)); const B = A.beats; let moved = 0;
+  for (let b = 0; b < B.n; b++) if (S.has(B.tid[b])) { B.tid[b] = dst; moved++; }
+  for (const k of S) if (A.templates[k]) A.templates[k].count = 0; if (A.templates[dst]) A.templates[dst].count += moved;
+}
+
 const H = {
   open(m) {
     OUT = m.out; fs.mkdirSync(OUT, { recursive: true });
     const { rec, ref } = readRecord(m.paths, m.opt);
+    if (m.maxSec && m.maxSec > 60 && m.maxSec * rec.fs < rec.n) { rec.n = Math.floor(m.maxSec * rec.fs); rec.sig = rec.sig.map(x => x.subarray(0, rec.n)); }
     REC = rec; SET = m.settings || {};
     A = E.analyze(rec, m.analysis || {}, (msg, p) => send({ type: 'progress', msg, p }));
     send({ type: 'progress', msg: 'Calculando el resumen', p: 0.93 });
@@ -107,7 +135,27 @@ const H = {
   },
   relabel(m) { const B = A.beats; for (const b of m.beats) { if (b >= 0 && b < B.n) { B.cls[b] = m.cls; B.edited[b] = 1; } } return { A: summaryOut() }; },
   relabelTemplate(m) { const B = A.beats; for (let b = 0; b < B.n; b++) if (B.tid[b] === m.tid) { B.cls[b] = m.cls; B.edited[b] = 1; } return { A: summaryOut() }; },
-  resetEdits() { const B = A.beats; B.edited.fill(0); return { A: summaryOut() }; },
+
+  /* ---- edición de latidos, plantillas, artefactos y FA */
+  insertBeat(m) { insertBeat(m.t, m.cls); return { A: summaryOut(), beat: lowerIdx(m.t) }; },
+  deleteBeats(m) { deleteBeats(m.beats); return { A: summaryOut() }; },
+  relabelTemplates(m) { const S = new Set(m.tids); const B = A.beats; for (let b = 0; b < B.n; b++) if (S.has(B.tid[b])) { B.cls[b] = m.cls; B.edited[b] = 1; } return { A: summaryOut() }; },
+  mergeTemplates(m) { mergeTemplates(m.tids); return { A: summaryOut() }; },
+  deleteTemplateBeats(m) { const S = new Set(m.tids); const B = A.beats; const del = []; for (let b = 0; b < B.n; b++) if (S.has(B.tid[b])) del.push(b); deleteBeats(del); return { A: summaryOut() }; },
+  setExclusions(m) { A.exclusions = m.list || []; return { A: summaryOut() }; },
+  setAf(m) { A.afUser = m.list || []; return { A: summaryOut() }; },
+  /* Reaplica lo guardado de un examen: borrados, etiquetas manuales (o latidos insertados), combinaciones, artefactos y FA. */
+  replay(m) {
+    let nDel = 0, nRel = 0, nIns = 0;
+    if (m.del && m.del.length) { const B = A.beats; const idx = []; for (const t of m.del) { const b = nearest(t, 0.05); if (b >= 0) idx.push(b); } nDel = idx.length; deleteBeats(idx); }
+    if (m.edits) for (const [t, c] of m.edits) { const b = nearest(t, 0.05); if (b >= 0) { A.beats.cls[b] = c; A.beats.edited[b] = 1; nRel++; } else { insertBeat(t, c); nIns++; } }
+    if (m.merges && m.firma === firma()) for (const g of m.merges) mergeTemplates(g);
+    if (m.exclusions) A.exclusions = m.exclusions;
+    if (m.afUser) A.afUser = m.afUser;
+    const R = summaryOut(); R.replay = { nDel, nRel, nIns }; return { A: R };
+  },
+  firma() { return { firma: firma() }; },
+  resetEdits() { const B = A.beats; B.edited.fill(0); A.exclusions = []; A.afUser = []; return { A: summaryOut() }; },
   exclude(m) { A.exclusions = (A.exclusions || []).concat([[m.t0, m.t1]]); return { A: summaryOut() }; },
   settings(m) { SET = Object.assign({}, SET, m.settings || {}); return { A: summaryOut() }; },
   defaults() { return { defaults: E.DEFAULTS, version: E.VERSION }; },

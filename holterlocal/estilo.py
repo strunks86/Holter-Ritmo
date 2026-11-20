@@ -6,7 +6,29 @@ C = {
     'trazo': '#111111', 'calibrador': '#0b57d0', 'fa': '#b45309', 'ref': '#0f766e',
 }
 
-COLOR_CLASE = ['#374151', '#1d4ed8', '#c81e1e', '#c2410c', '#6b7280', '#6b7280', '#7c3aed', '#0e7490', '#9f1239', '#15803d']
+# 0 N, 1 S, 2 V, 3 F, 4 artefacto, 5 desconocido, 6 bloqueo de rama, 7 aberrante, 8 escape ventricular,
+# 9 ventricular estimulado, 10 R sobre T, 11 interpolado, 12 auricular estimulado, 13 estimulado doble
+COLOR_CLASE = ['#374151', '#1d4ed8', '#dc2626', '#92400e', '#9ca3af', '#c2410c', '#0d9488', '#0891b2', '#ea580c',
+               '#65a30d', '#e8735e', '#d97706', '#db2777', '#b8860b']
+
+# colores del papel claro y del fondo oscuro de la tira
+PAPEL = {
+    False: {'papel': '#fffdfb', 'rejilla1': '#f6d9d9', 'rejilla2': '#e9a9a9', 'trazo': '#111111', 'texto': '#1f2933', 'texto2': '#5b6573', 'normal': '#374151'},
+    True: {'papel': '#0d1117', 'rejilla1': '#26191b', 'rejilla2': '#4a2a2e', 'trazo': '#e5e7eb', 'texto': '#e5e7eb', 'texto2': '#9ca3af', 'normal': '#e5e7eb'},
+}
+
+# barras de sucesos: (tipo, nombre, color, prioridad: 1 es la más alta)
+SUCESOS_BARRA = [
+    ('artifact', 'Artefacto', '#d946ef', 1), ('af', 'Fibrilación auricular', '#2dd4bf', 2), ('pause', 'Pausa', '#facc15', 3),
+    ('sTrig', 'Trigeminismo supraventricular', '#808000', 4), ('sBig', 'Bigeminismo supraventricular', '#06b6d4', 5),
+    ('svt', 'Taquicardia supraventricular', '#16a34a', 6), ('vTrig', 'Trigeminismo ventricular', '#fdba74', 7),
+    ('vBig', 'Bigeminismo ventricular', '#b07a7a', 8), ('vt', 'Taquicardia ventricular', '#a78bfa', 9),
+    ('u3', 'Definido por el usuario 3', '#fb7185', 10), ('u2', 'Definido por el usuario 2', '#c2410c', 11),
+    ('u1', 'Definido por el usuario 1', '#b08968', 12), ('tachy', 'Taquicardia', '#d2b48c', 13), ('brady', 'Bradicardia', '#86efac', 14),
+    ('stDep', 'Descenso del ST', '#0d9488', 15), ('stEle', 'Elevación del ST', '#be123c', 16),
+]
+# tipos del motor que se dibujan con la barra de otro
+ALIAS_BARRA = {'nosig': 'artifact', 'sRun': 'svt', 'aivr': 'vt', 'ivr': 'vt'}
 
 QSS = f"""
 QMainWindow, QWidget {{ background: {C['fondo']}; color: {C['texto']}; font-size: 10pt; }}

@@ -13,9 +13,18 @@ DTYPES = {
     'Uint16Array': np.uint16, 'Uint32Array': np.uint32, 'Float32Array': np.float32, 'Float64Array': np.float64,
 }
 
-CLS_SYM = ['N', 'S', 'V', 'F', 'X', 'Q', 'B', 'A', 'E', 'P']
-CLS_NAME = ['Normal', 'Supraventricular', 'Ventricular', 'Fusión', 'Artefacto', 'No clasificable',
-            'Bloqueo de rama', 'Aberrante', 'Escape ventricular', 'Estimulado']
+# Etiquetas de latido (las mismas letras que usa la revisión clínica de Holter)
+CLS_SYM = ['N', 'S', 'V', 'F', 'A', 'U', 'B', 'T', 'E', 'P', 'R', 'I', 'C', 'D']
+CLS_NAME = ['Normal', 'Supraventricular', 'Ventricular', 'Fusión', 'Artefacto', 'Desconocido',
+            'Bloqueo de rama', 'Aberrante', 'Escape ventricular', 'Ventricular estimulado', 'R sobre T', 'Interpolado',
+            'Auricular estimulado', 'Estimulado doble']
+NCLS = len(CLS_SYM)
+# orden de los menús de etiquetas
+ORDEN_ETIQUETAS = [0, 1, 6, 7, 2, 10, 11, 8, 12, 9, 13, 3, 5]
+VENTRICULAR = (2, 3, 8, 10, 11)
+ESTIMULADO = (9, 12, 13)
+# grupos de plantillas
+GRUPO_CLASE = {0: 'N', 6: 'N', 7: 'S', 1: 'S', 2: 'V', 3: 'V', 8: 'V', 10: 'V', 11: 'V', 9: 'P', 12: 'P', 13: 'P', 5: 'U', 4: 'X'}
 
 EVENT_NAMES = [
     ('vt', 'Taquicardia ventricular'), ('aivr', 'Ritmo idioventricular acelerado'), ('ivr', 'Ritmo idioventricular'),
@@ -25,7 +34,8 @@ EVENT_NAMES = [
     ('sPair', 'Pares supraventriculares'), ('sIso', 'Supraventriculares aisladas'), ('sBig', 'Bigeminismo supraventricular'),
     ('sTrig', 'Trigeminismo supraventricular'), ('pause', 'Pausas'), ('brady', 'Bradicardia'), ('tachy', 'Taquicardia'),
     ('af', 'Fibrilación auricular'), ('stDep', 'Descenso del ST'), ('stEle', 'Elevación del ST'),
-    ('doubt', 'Latidos dudosos'), ('nosig', 'Sin señal'), ('artifact', 'Artefacto'),
+    ('doubt', 'Latidos dudosos'), ('u1', 'Definido por el usuario 1'), ('u2', 'Definido por el usuario 2'),
+    ('u3', 'Definido por el usuario 3'), ('diary', 'Diario del paciente'), ('nosig', 'Sin señal'), ('artifact', 'Artefacto'),
 ]
 EVENT_LABEL = dict(EVENT_NAMES)
 
@@ -118,7 +128,48 @@ class Examen:
                 self.eventos.append({'type': 'ha_' + e['kind'], 'label': etiqueta_ha(e['kind']), 't0': e['start_s'], 't1': e['end_s'],
                                      'dur': max(0.0, e['end_s'] - e['start_s']), 'n': e.get('n', 0), 'b0': -1,
                                      'detail': e.get('detail', ''), 'severity': e.get('severity', 'info')})
-            self.eventos.sort(key=lambda e: e['t0'])
+        self.sumar_sesion()
+
+    def sumar_sesion(self):
+        """Añade los sucesos del usuario y del diario guardados con el examen y quita los que borró."""
+        ses = getattr(self, 'sesion', None)
+        if ses is not None:
+            d = ses.d
+            ocultos = {(o[0], round(float(o[1]), 1)) for o in d.get('ocultos', [])}
+            ev = [e for e in self.eventos if not str(e['type']).startswith(('u1', 'u2', 'u3', 'diary'))]
+            ev = [e for e in ev if (e['type'], round(float(e['t0']), 1)) not in ocultos]
+            for e in ev:
+                o = d.get('st_edit', {}).get('%s@%.1f' % (e['type'], e['t0']))
+                if o:
+                    e.update(o); e['editado'] = 1
+            for u in d.get('sucesos_usuario', []):
+                b0 = int(np.searchsorted(self.t, u['t0'])); b1 = max(b0, int(np.searchsorted(self.t, u['t1'])) - 1)
+                n = int(np.sum(self.cls[b0:b1 + 1] != 4)) if b1 >= b0 and len(self.t) else 0
+                ev.append({'type': 'u%d' % u['k'], 'label': ses.etiqueta_usuario(u['k']), 't0': float(u['t0']), 't1': float(u['t1']),
+                           'dur': float(u['t1'] - u['t0']), 'n': n, 'b0': b0, 'b1': b1, 'usuario': 1})
+            for dd in d.get('diario', []):
+                ev.append({'type': 'diary', 'label': 'Diario', 't0': float(dd['t']), 't1': float(dd['t']), 'dur': 0, 'n': 0, 'b0': -1,
+                           'detail': dd.get('texto', '')})
+            self.eventos = ev
+        self.eventos.sort(key=lambda e: e['t0'])
+
+    def por_tipo(self):
+        by = {}
+        for e in self.eventos:
+            by.setdefault(e['type'], []).append(e)
+        return by
+
+    def parse_reloj(self, txt):
+        """'HH:MM:SS (n)' o 'HH:MM' a segundos desde el inicio del registro; None si no se entiende."""
+        import re
+        m = re.match(r'^\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(?:\((\d+)\))?\s*$', txt or '')
+        if not m:
+            return None
+        h, mi, se, dia = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0), int(m.group(4) or 1)
+        x = h * 3600 + mi * 60 + se + (dia - 1) * 86400 - self.seg_inicio()
+        if x < 0 and m.group(4) is None:
+            x += 86400
+        return float(min(max(0.0, x), self.dur))
 
     # ---- utilidades
     def mv(self, ch, i0, i1):
