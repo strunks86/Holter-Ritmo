@@ -263,8 +263,12 @@ class DialogoBuscar(QDialog):
 SECCIONES = [('portada', 'Información del paciente y estadísticas resumidas'), ('estadisticas', 'Estadísticas completas'),
              ('narrativo', 'Resumen narrativo'), ('perfiles', 'Perfiles hora a hora'), ('tendencias', 'Tendencias'),
              ('plantillas', 'Plantillas'), ('tiras', 'Tiras de ECG'), ('completa', 'Información completa (ECG en miniatura)'),
-             ('holterai', 'Hallazgos de conducción (holterai)')]
-PRESET_BASE = {'secciones': {k: k not in ('completa',) for k, _ in SECCIONES}, 'condensado': False, 'ganancia': 10, 'tendencias': ['fc', 'ectopia', 'st', 'qt', 'vfc'],
+             ('holterai', 'Hallazgos de conducción (holterai)'),
+             # secciones tomadas de medilog Darwin2 (apagadas por defecto)
+             ('tabular', 'Resumen tabular de día y de noche'), ('vfc', 'Variabilidad de la frecuencia cardíaca completa'),
+             ('qt', 'Tabla de QT y QTc'), ('st', 'Tabla de episodios del ST'), ('mediciones', 'Mediciones manuales de latidos')]
+DARWIN_SECCIONES = ('tabular', 'vfc', 'qt', 'st', 'mediciones')
+PRESET_BASE = {'secciones': {k: k not in ('completa',) + DARWIN_SECCIONES for k, _ in SECCIONES}, 'condensado': False, 'ganancia': 10, 'tendencias': ['fc', 'ectopia', 'st', 'qt', 'vfc'],
                'completa_canales': [0], 'completa_horas': [], 'rejilla': True}
 
 

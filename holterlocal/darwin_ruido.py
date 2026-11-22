@@ -118,7 +118,7 @@ class VistaRuido(QWidget):
         fila = QHBoxLayout(); self.op = {}
         for k, n in MOTIVOS + [('sinusal', 'Ocultar episodios de ritmo sinusal'), ('completas', 'Solo exclusiones completas (todos los canales)'),
                               ('por_longitud', 'Ordenar por duración')]:
-            c = QCheckBox(n); c.setChecked(k in dict(MOTIVOS)); c.toggled.connect(self._recalcular); self.op[k] = c; fila.addWidget(c)
+            c = QCheckBox(n); c.setChecked(k in dict(MOTIVOS) or k == 'completas'); c.toggled.connect(self._recalcular); self.op[k] = c; fila.addWidget(c)
         fila.addStretch(1); lay.addLayout(fila)
         sp = QSplitter(Qt.Horizontal)
         self.arbol = QTreeWidget(); self.arbol.setHeaderLabels(['Episodio', 'Hora', 'Canal', 'Motivo', 'Duración'])

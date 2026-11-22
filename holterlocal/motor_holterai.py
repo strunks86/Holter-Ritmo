@@ -90,6 +90,14 @@ def analizar(peticion):
     width = np.fromiter((float(b.features.get('width_ms', np.nan) or np.nan) for b in A.beats), np.float32, n)
     t.tofile(os.path.join(out, 'ha_t.bin')); cls.tofile(os.path.join(out, 'ha_cls.bin'))
     afp.tofile(os.path.join(out, 'ha_af.bin')); width.tofile(os.path.join(out, 'ha_ancho.bin'))
+    # PR por latido (ms) para el análisis auricular; NaN donde no hay onda P medible
+    def _pr(b):
+        try:
+            v = b.features.get('pr_ms')
+            return float(v) if v is not None and b.features.get('p_present', True) else np.nan
+        except (TypeError, ValueError):
+            return np.nan
+    np.fromiter((_pr(b) for b in A.beats), np.float32, n).tofile(os.path.join(out, 'ha_pr.bin'))
     S = {k: v for k, v in A.summary.items() if k not in TARGET_EXCL}
     res = {
         'n': n, 'elapsed': time.time() - t0, 'modelo': opts.ecgf_model,

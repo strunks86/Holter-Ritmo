@@ -3,7 +3,7 @@ import itertools
 
 import numpy as np
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QPainter
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGridLayout,
                                QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox,
                                QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
@@ -52,7 +52,7 @@ PLANILLA = [('normal', 'Normal (ritmo sinusal de base)', 'uno'), ('hrmax', 'Frec
             ('avb23', 'Bloqueo AV de segundo y tercer grado', 'varios')]
 AVB_23 = ['ha_av_block_mobitz1', 'ha_av_block_mobitz2', 'ha_av_block_2to1', 'ha_av_block_advanced', 'ha_av_block_complete']
 POR_DEFECTO = {'chans': [0, 1, 2], 'skip_fail': True, 'diario': True, 'periodicas': False, 'offset': '00:00:00', 'intervalo': '01:00:00',
-               'planilla': {k: [True, 1 if modo == 'uno' else 2, 'examen'] for k, _, modo in PLANILLA},
+               'planilla': {k: [True, 10, 'examen'] for k, _, modo in PLANILLA},
                'minmax': {k: True for k, _ in MINMAX},
                'eventos': {k: [k in ('vPair', 'vRun', 'sRun', 'af', 'pause', 'avb', 'pfc', 'u1', 'u2', 'u3'), 3, 'examen']
                            for _, g in EVENTOS_AUTO for k, _ in g}}
@@ -92,6 +92,10 @@ def _cands_minmax(ex, k):
         e = max(evs, key=lambda e: e[campo]) if mayor else min(evs, key=lambda e: e[campo])
         return float(e['t0']), e
     hr = A.get('hr') or {}
+    fijo = (ex.sesion.d.get('minmax_fijado') or {}) if getattr(ex, 'sesion', None) else {}
+    f = fijo.get({'hrmax': 'fc_max', 'hrmin': 'fc_min', 'rr_long': 'rr_max', 'rr_short': 'rr_min'}.get(k, ''))
+    if f and f.get('t') is not None:
+        return float(f['t']) - 3.75, {'hrmax': 'FC máxima', 'hrmin': 'FC mínima', 'rr_long': 'RR más largo', 'rr_short': 'RR más corto'}[k] + ' ' + f['texto']
     if k in ('hrmax', 'hrmin'):
         b = hr.get('maxB' if k == 'hrmax' else 'minB')
         if b is not None and 0 <= b < len(ex.t):
@@ -141,18 +145,36 @@ def _cands_evento(ex, k):
     return out
 
 
-def _cand_normal(ex):
-    """Tramo de 7,5 s solo con latidos normales, con los canales limpios y sin exclusiones, de día si se puede,
-    con la FC más cercana a la mediana del registro."""
-    n = len(ex.t)
-    if n < 10:
-        return None
+def _separados(cands, sep, n):
+    """Primeros n candidatos (ya ordenados del mejor al peor) que estén a más de sep segundos de los elegidos."""
+    out = []
+    for c in cands:
+        if all(abs(c[0] - o[0]) > sep for o in out):
+            out.append(c)
+            if len(out) >= n:
+                break
+    return out
+
+
+def _repartidos(cands, n):
+    """n candidatos repartidos a lo largo del registro (para elegir el más claro de un tipo frecuente)."""
+    if len(cands) <= n:
+        return cands
+    idx = np.unique(np.linspace(0, len(cands) - 1, n).round().astype(int))
+    return [cands[i] for i in idx]
+
+
+def _cand_normal(ex, n=10):
+    """Tramos de 7,5 s solo con latidos normales, con los canales limpios y sin exclusiones, de día si se puede,
+    ordenados por cercanía de la FC a la mediana del registro."""
+    if len(ex.t) < 10:
+        return []
     vent = 7.5
     okN = (np.asarray(ex.cls) == 0)
     rr = np.asarray(ex.rr, float)
     rrN = rr[okN & np.isfinite(rr) & (rr > 0.25)]
     if not len(rrN):
-        return None
+        return []
     med = 60.0 / float(np.median(rrN))
     nseg = int(ex.dur) + 1
     malo = np.zeros(nseg, bool)
@@ -163,12 +185,10 @@ def _cand_normal(ex):
     cn = np.r_[0, np.cumsum(~okN)]
     t0s = np.arange(5.0, max(5.0, ex.dur - vent - 5.0), vent)
     if not len(t0s):
-        return None
+        return []
     b0 = np.searchsorted(ex.t, t0s); b1 = np.searchsorted(ex.t, t0s + vent)
     s0 = t0s.astype(int); s1 = np.minimum(nseg, (t0s + vent).astype(int) + 1)
     limpio = ((b1 - b0) >= 4) & ((cn[b1] - cn[b0]) == 0) & ((cm[s1] - cm[s0]) == 0)
-    if not limpio.any():
-        return None
     hr = np.full(len(t0s), np.nan)
     for i in np.nonzero(limpio)[0]:
         r = rr[b0[i] + 1:b1[i]]; r = r[np.isfinite(r) & (r > 0.25)]
@@ -180,20 +200,43 @@ def _cand_normal(ex):
         pen = pen + np.where(es_noche(ex, t0s), 1000.0, 0.0)
     except Exception:
         pass
-    if not np.isfinite(pen).any():
-        return None
-    i = int(np.nanargmin(pen))
-    return float(t0s[i]), 'Ritmo de base %d lpm' % round(hr[i])
+    orden = [i for i in np.argsort(pen) if np.isfinite(pen[i])]
+    return _separados([(float(t0s[i]), 'Ritmo de base %d lpm' % round(hr[i])) for i in orden], 300.0, n)
 
 
-def _cands_planilla(ex, k):
-    """Lista de (inicio de la tira, anotación) para un elemento de la planilla."""
+def _cands_fc(ex, k, n):
+    """FC máxima o mínima: el valor del resumen (o el fijado a mano) primero y después los siguientes episodios
+    más extremos (FC de 3 latidos sin artefactos), separados al menos 30 s."""
+    out = []
+    r = _cands_minmax(ex, k)
+    if r:
+        out.append(r)
+    try:
+        from .darwin_ruido import valores_minmax
+        idx, val = valores_minmax(ex, 'fc')
+    except Exception:
+        idx, val = np.zeros(0, int), np.zeros(0)
+    if len(idx):
+        o = np.argsort(val)
+        if k == 'hrmax':
+            o = o[::-1]
+        nom = 'FC máxima' if k == 'hrmax' else 'FC mínima'
+        out += [(float(ex.t[idx[i]]) - 3.75, '%s %d lpm' % (nom, round(val[i]))) for i in o[:5000]]
+    return _separados(out, 30.0, n)
+
+
+GRAVEDAD_AVB = {'ha_av_block_complete': 0, 'ha_av_block_advanced': 1, 'ha_av_block_2to1': 2, 'ha_av_block_mobitz2': 3, 'ha_av_block_mobitz1': 4}
+
+
+def _cands_planilla(ex, k, n=10):
+    """Candidatos (inicio de la tira, anotación) de un apartado de la planilla, del mejor al peor."""
+    n = 10 ** 6 if n == 'todos' else int(n)
     if k == 'normal':
-        r = _cand_normal(ex); return [r] if r else []
+        return _cand_normal(ex, n)
     if k in ('hrmax', 'hrmin'):
-        r = _cands_minmax(ex, k); return [r] if r else []
+        return _cands_fc(ex, k, n)
     if k in ('vIso', 'sIso'):
-        return [(t - 2.0, '') for t, _ in _cands_evento(ex, k)]
+        return _repartidos(sorted((t - 2.0, '') for t, _ in _cands_evento(ex, k)), n)
     tipos = {'vPair': ['vPair'], 'sPair': ['sPair'], 'vt': ['vt'], 'vt_fast': ['vt'], 'vt_long': ['vt'],
              'svt_fast': ['svt', 'sRun'], 'svt_long': ['svt', 'sRun'], 'avb23': AVB_23, 'vTrip': ['vt', 'aivr', 'ivr']}.get(k)
     if not tipos:
@@ -205,51 +248,59 @@ def _cands_planilla(ex, k):
         return ' %d lpm' % round(e['rate']) if e.get('rate') else ''
     if k.endswith('_fast') or k.endswith('_long'):
         campo = 'rate' if k.endswith('_fast') else 'n'
-        evs = [e for e in evs if e.get(campo) is not None]
-        if not evs:
-            return []
-        e = max(evs, key=lambda e: (e[campo], e.get('dur') or 0))
+        # más de 300 lpm en una racha es casi siempre un latido mal detectado (ruido), no una taquicardia real
+        evs = [e for e in evs if e.get(campo) is not None and (e.get('rate') or 0) <= 300]
+        evs.sort(key=lambda e: (e[campo], e.get('dur') or 0), reverse=True)
         nom = dict((a, b) for a, b, _ in PLANILLA)[k]
-        extra = lpm(e) if campo == 'rate' else ' %d latidos' % int(e['n']) + lpm(e)
-        return [(float(e['t0']) - 1.5, nom + extra)]
+        return _separados([(float(e['t0']) - 1.5, nom + (lpm(e) if campo == 'rate' else ' %d latidos' % int(e['n']) + lpm(e))) for e in evs], 5.0, n)
     out = []
     for e in evs:
         lab = e.get('label') or ''
         if k in ('vt', 'vTrip') and e.get('n'):
             lab = ('Taquicardia ventricular' if k == 'vt' else 'Tripleta ventricular') + ' %d latidos' % int(e['n']) + lpm(e)
-        out.append((float(e['t0']) - 1.5, lab))
-    return out
+        out.append((float(e['t0']) - 1.5, lab, GRAVEDAD_AVB.get(e['type'], 0)))
+    if k == 'avb23':
+        out.sort(key=lambda c: (c[2], c[0]))
+        return _separados([c[:2] for c in out], 5.0, n)
+    return _repartidos(sorted(c[:2] for c in out), n)
+
+
+# apartados de las listas antiguas que la planilla ya cubre (si la planilla los pide, no se repiten)
+CUBIERTOS = {'mm:hrmax': 'hrmax', 'mm:hrmin': 'hrmin', 'mm:srun_fast': 'svt_fast', 'mm:srun_long': 'svt_long',
+             'ev:vIso': 'vIso', 'ev:vPair': 'vPair', 'ev:sIso': 'sIso', 'ev:sPair': 'sPair'}
 
 
 def generar_auto(ex, op):
-    """Tiras automáticas según las opciones (episodios mín./máx., sucesos por examen / 24 h / hora, diario y periódicas)."""
+    """Tiras automáticas según las opciones (planilla, episodios mín./máx., sucesos por examen / 24 h / hora, diario y periódicas).
+    Cada apartado de la planilla trae varias candidatas: la primera se imprime y las demás quedan para elegir en la pestaña Tiras."""
     chans = [c for c in op.get('chans', [0, 1, 2]) if c < len(ex.chans)] or [0]
     tiras = []
     pl = dict(POR_DEFECTO['planilla']); pl.update(op.get('planilla') or {})
     noms = {k: n for k, n, _ in PLANILLA}
+    elegidas = (ex.sesion.d.get('planilla_elegida') or {}) if getattr(ex, 'sesion', None) else {}
+    activos = set()
     for k, _, modo in PLANILLA:
-        on, cant, por = pl.get(k, [False, 1, 'examen'])
+        on, cant, por = pl.get(k, [False, 10, 'examen'])
         if not on:
             continue
-        grupo = {'examen': lambda t: 0, '24h': lambda t: int(t // 86400), 'hora': lambda t: int(t // 3600)}.get(por, lambda t: 0)
-        cuenta = {}
-        for t, lab in sorted(_cands_planilla(ex, k)):
-            g = grupo(t)
-            lim = 1 if modo == 'uno' else (10 ** 6 if cant == 'todos' else int(cant))
-            if cuenta.get(g, 0) >= lim:
-                continue
-            cuenta[g] = cuenta.get(g, 0) + 1
-            tiras.append(nueva_tira(t, 7.5, lab or noms[k], chans, True, 'pl:' + k))
-            if len(tiras) > 600:
-                break
+        activos.add(k)
+        cands = _cands_planilla(ex, k, cant)
+        el = elegidas.get(k)
+        if el is not None and not any(abs(t - el['t0']) < 1.0 for t, _ in cands):
+            cands = [(float(el['t0']), el.get('ann', ''))] + cands
+        for i, (t, lab) in enumerate(cands):
+            x = nueva_tira(t, 7.5, lab or noms[k], chans, True, 'pl:' + k)
+            x['grupo'] = noms[k]; x['candidata'] = i + 1; x['n_cand'] = len(cands)
+            x['imprimir'] = (abs(t - el['t0']) < 1.0) if el is not None else (i == 0)
+            tiras.append(x)
     for k, n in MINMAX:
-        if op['minmax'].get(k):
+        if op['minmax'].get(k) and CUBIERTOS.get('mm:' + k) not in activos:
             r = _cands_minmax(ex, k)
             if r:
                 tiras.append(nueva_tira(r[0], 7.5, r[1], chans, True, 'mm:' + k))
     nombres = {k: n for _, g in EVENTOS_AUTO for k, n in g}
     for k, (on, cant, por) in op['eventos'].items():
-        if not on:
+        if not on or CUBIERTOS.get('ev:' + k) in activos:
             continue
         cands = sorted(_cands_evento(ex, k))
         grupo = {'examen': lambda t: 0, '24h': lambda t: int(t // 86400), 'hora': lambda t: int(t // 3600)}[por]
@@ -279,11 +330,15 @@ def generar_auto(ex, op):
             t += paso
     tiras.sort(key=lambda x: x['t0'])
     # la planilla y las listas antiguas pueden pedir el mismo episodio: se deja una sola tira (la primera pedida)
+    # (las candidatas de la planilla no se descartan: son para elegir)
     unicas = []
     for x in sorted(tiras, key=lambda x: (not str(x['clave']).startswith(('pl:', 'mm:')), x['t0'])):
-        if not any(abs(u['t0'] - x['t0']) < 1.0 and u['chans'] == x['chans'] and not u.get('pagina') for u in unicas):
+        if x.get('candidata') or not any(abs(u['t0'] - x['t0']) < 1.0 and u['chans'] == x['chans'] and not u.get('pagina')
+                                         and u.get('imprimir', True) for u in unicas):
             unicas.append(x)
-    unicas.sort(key=lambda x: x['t0'])
+    # orden de impresión: primero la planilla en su orden y con las candidatas de cada apartado juntas; después lo demás por hora
+    orden = {'pl:' + k: i for i, (k, _, _) in enumerate(PLANILLA)}
+    unicas.sort(key=lambda x: (orden.get(x['clave'], 999), x.get('candidata', 0) if x['clave'] in orden else 0, x['t0']))
     return unicas
 
 
@@ -351,24 +406,26 @@ class DialogoTirasAuto(QDialog):
         tabs = QTabWidget(); lay.addWidget(tabs, 1)
         w = QWidget(); g = QGridLayout(w); self.pl = {}
         pl = dict(POR_DEFECTO['planilla']); pl.update(op.get('planilla') or {})
-        for i, (k, n, modo) in enumerate(PLANILLA):
-            on, cant, por = pl.get(k, [True, 1, 'examen'])
+        g.addWidget(QLabel('<b>Apartado</b>'), 0, 0); g.addWidget(QLabel('<b>Candidatas para elegir</b>'), 0, 1)
+        for i, (k, n, modo) in enumerate(PLANILLA, start=1):
+            on, cant, por = pl.get(k, [True, 10, 'examen'])
             cb = QCheckBox(n); cb.setChecked(on); g.addWidget(cb, i, 0)
-            cc = QComboBox(); pp = QComboBox()
-            if modo == 'varios':
-                cc.addItem('Imprimir todo', 'todos')
-                for v in (1, 2, 3, 5, 10, 20, 50, 100):
-                    cc.addItem(str(v), v)
-                cc.setCurrentIndex(max(0, cc.findData(cant)))
-                [pp.addItem(a, b) for a, b in (('por examen', 'examen'), ('cada 24 horas', '24h'), ('cada hora', 'hora'))]
-                pp.setCurrentIndex(max(0, pp.findData(por)))
-                g.addWidget(cc, i, 1); g.addWidget(pp, i, 2)
-            else:
-                cc.addItem('1', 1); pp.addItem('por examen', 'examen')
-                g.addWidget(QLabel('una tira representativa, de día' if k == 'normal' else 'el episodio más extremo'), i, 1, 1, 2)
+            cc = QComboBox()
+            for v in (1, 3, 5, 10, 15, 20, 30):
+                cc.addItem(str(v), v)
+            cc.addItem('Todas', 'todos')
+            cc.setCurrentIndex(max(0, cc.findData(cant if cant in (1, 3, 5, 10, 15, 20, 30, 'todos') else 10)))
+            pp = QComboBox(); pp.addItem('por examen', 'examen')
+            g.addWidget(cc, i, 1)
+            orden = {'normal': 'la FC más típica del día primero', 'hrmax': 'de la más alta a la menos alta', 'hrmin': 'de la más baja a la menos baja',
+                     'vt_fast': 'de la más rápida a la menos rápida', 'svt_fast': 'de la más rápida a la menos rápida',
+                     'vt_long': 'de la más larga a la menos larga', 'svt_long': 'de la más larga a la menos larga',
+                     'avb23': 'el más grave primero'}.get(k, 'repartidas a lo largo del registro')
+            g.addWidget(QLabel(orden), i, 2)
             self.pl[k] = (cb, cc, pp)
-        nota = QLabel('Si otra lista pide el mismo episodio, sale una sola tira. El bloqueo AV de 2.º y 3.er grado viene de holterai.')
-        nota.setWordWrap(True); g.addWidget(nota, len(PLANILLA), 0, 1, 4)
+        nota = QLabel('De cada apartado se imprime la primera candidata. En la pestaña Tiras eliges otra con «Elegir esta del apartado» '
+                      '(por ejemplo, si la FC mínima automática es un artefacto). El bloqueo AV de 2.º y 3.er grado viene de holterai.')
+        nota.setWordWrap(True); g.addWidget(nota, len(PLANILLA) + 1, 0, 1, 4)
         g.setRowStretch(30, 1); g.setColumnStretch(3, 1); tabs.addTab(w, 'Planilla del informe')
         w = QWidget(); g = QGridLayout(w); self.mm = {}
         for i, (k, n) in enumerate(MINMAX):
@@ -422,8 +479,9 @@ class VistaTiras(QWidget):
     cambio = Signal()
     excluir = Signal(float, float)
     pedir_auto = Signal()
+    elegida = Signal(str, float)          # apartado de la planilla ('hrmax', 'hrmin', …) e inicio de la tira elegida
 
-    COLS = ['Hora', 'Anotación', 'Auto', 'Duración (s)', 'Canales']
+    COLS = ['Imprimir', 'Hora', 'Anotación', 'Auto', 'Duración (s)', 'Canales']
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -433,7 +491,15 @@ class VistaTiras(QWidget):
         izq = QWidget(); il = QVBoxLayout(izq); il.setContentsMargins(0, 0, 0, 0)
         self.tabla = QTableWidget(0, len(self.COLS)); self.tabla.setHorizontalHeaderLabels(self.COLS)
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows); self.tabla.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.tabla.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch); self.tabla.verticalHeader().setVisible(False)
+        self.tabla.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch); self.tabla.verticalHeader().setVisible(False)
+        self.tabla.cellClicked.connect(self._clic_celda)
+        fa = QHBoxLayout(); fa.addWidget(QLabel('Apartado'))
+        self.apartado = QComboBox(); self.apartado.currentIndexChanged.connect(lambda *_: self.mostrar(self.ex) if self.ex else None)
+        fa.addWidget(self.apartado, 1)
+        for txt, fn in (('Elegir esta del apartado', self._elegir), ('◀ Candidata', lambda: self._candidata(-1)), ('Candidata ▶', lambda: self._candidata(1)),
+                        ('Borrar candidatas no elegidas', self._sin_candidatas)):
+            b = QPushButton(txt); b.clicked.connect(fn); fa.addWidget(b)
+        il.addLayout(fa)
         self.tabla.horizontalHeader().sectionClicked.connect(self._ordenar)
         self.tabla.currentCellChanged.connect(lambda r, *_: self._previa(r))
         self.tabla.cellDoubleClicked.connect(lambda r, c: self._ir(r))
@@ -453,57 +519,124 @@ class VistaTiras(QWidget):
     def mostrar(self, ex):
         self.ex = ex; self.previa.ex = ex
         L = self.lista(); tb = self.tabla
+        # filtro por apartado de la planilla
+        grupos = []
+        for t in L:
+            if t.get('grupo') and t['grupo'] not in grupos:
+                grupos.append(t['grupo'])
+        actual = self.apartado.currentData()
+        self.apartado.blockSignals(True); self.apartado.clear(); self.apartado.addItem('Todas las tiras', '')
+        for g in grupos:
+            n = sum(1 for t in L if t.get('grupo') == g)
+            self.apartado.addItem(f'{g} ({n} candidatas)', g)
+        self.apartado.setCurrentIndex(max(0, self.apartado.findData(actual or ''))); self.apartado.blockSignals(False)
+        filtro = self.apartado.currentData() or ''
+        self.vis = [i for i, t in enumerate(L) if not filtro or t.get('grupo') == filtro]
         r0 = tb.currentRow()
-        tb.setRowCount(len(L))
-        for i, t in enumerate(L):
+        tb.setRowCount(len(self.vis))
+        for fila, i in enumerate(self.vis):
+            t = L[i]
             dia = int((ex.seg_inicio() + t['t0']) // 86400)
             hora = ex.reloj(t['t0']).split(' ')[-1] + (f' ({dia + 1})' if dia else '')
             can = ('canal %d' % (t.get('canal', 0) + 1)) if t.get('pagina') else ', '.join(str(c + 1) for c in t['chans'])
             dur = ('%d min' % t['pagina']) if t.get('pagina') else ('%g' % t['dur']).replace('.', ',')
-            for j, v in enumerate([hora, t.get('ann', ''), 'S' if t.get('auto') else '', dur, can]):
-                tb.setItem(i, j, QTableWidgetItem(v))
-        tb.resizeColumnToContents(0)
-        if 0 <= r0 < len(L):
+            ann = t.get('ann', '')
+            if t.get('candidata'):
+                ann += f'  · candidata {t["candidata"]} de {t.get("n_cand", "?")}'
+            imp = QTableWidgetItem(); imp.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
+            imp.setCheckState(Qt.Checked if t.get('imprimir', True) else Qt.Unchecked)
+            tb.setItem(fila, 0, imp)
+            for j, v in enumerate([hora, ann, 'S' if t.get('auto') else '', dur, can], start=1):
+                it = QTableWidgetItem(v)
+                if not t.get('imprimir', True):
+                    it.setForeground(QColor('#8a8f98'))
+                tb.setItem(fila, j, it)
+        tb.resizeColumnToContents(0); tb.resizeColumnToContents(1)
+        if 0 <= r0 < len(self.vis):
             tb.selectRow(r0)
-        n_auto = sum(1 for t in L if t.get('auto'))
-        self.cuenta.setText(f'{len(L)} tiras ({n_auto} automáticas). El orden de la lista es el orden en que se imprimen. Clic en un encabezado para ordenar.')
+        n_auto = sum(1 for t in L if t.get('auto')); n_imp = sum(1 for t in L if t.get('imprimir', True))
+        self.cuenta.setText(f'{len(L)} tiras ({n_auto} automáticas, {n_imp} se imprimen). El orden de la lista es el orden en que se imprimen. '
+                            'Clic en un encabezado para ordenar; la casilla Imprimir decide si la tira va al informe.')
         self._previa(tb.currentRow())
 
-    def _previa(self, r):
+    def _idx(self, fila):
+        v = getattr(self, 'vis', None)
+        return v[fila] if v is not None and 0 <= fila < len(v) else -1
+
+    def _clic_celda(self, fila, col):
+        i = self._idx(fila); L = self.lista()
+        if col == 0 and 0 <= i < len(L):
+            on = self.tabla.item(fila, 0).checkState() == Qt.Checked
+            if on != L[i].get('imprimir', True):
+                L[i]['imprimir'] = on; self.mostrar(self.ex); self.cambio.emit()
+
+    def _elegir(self):
+        """Deja la tira elegida como la que se imprime de su apartado y recuerda la elección aunque se regeneren las tiras."""
+        i = self._idx(self.tabla.currentRow()); L = self.lista()
+        if not (0 <= i < len(L)) or not L[i].get('grupo'):
+            return
+        g = L[i]['grupo']; clave = L[i]['clave']
+        for t in L:
+            if t.get('grupo') == g:
+                t['imprimir'] = t is L[i]
+        self.ex.sesion.d.setdefault('planilla_elegida', {})[clave[3:]] = {'t0': float(L[i]['t0']), 'ann': L[i].get('ann', '')}
+        self.mostrar(self.ex); self.cambio.emit(); self.elegida.emit(clave[3:], float(L[i]['t0']))
+
+    def _candidata(self, d):
+        """Recorre las candidatas del apartado actual (o de la tira elegida)."""
+        i = self._idx(self.tabla.currentRow()); L = self.lista()
+        g = self.apartado.currentData() or (L[i].get('grupo') if 0 <= i < len(L) else '')
+        if not g:
+            return
+        filas = [f for f, j in enumerate(self.vis) if L[j].get('grupo') == g]
+        if not filas:
+            return
+        cur = self.tabla.currentRow()
+        pos = filas.index(cur) + d if cur in filas else 0
+        f = filas[max(0, min(len(filas) - 1, pos))]
+        self.tabla.selectRow(f); self._ir(f)
+
+    def _sin_candidatas(self):
         L = self.lista()
+        L[:] = [t for t in L if not (t.get('candidata') and not t.get('imprimir', True))]
+        self.mostrar(self.ex); self.cambio.emit()
+
+    def _previa(self, r):
+        L = self.lista(); r = self._idx(r)
         self.previa.tira = L[r] if 0 <= r < len(L) else None; self.previa.update()
 
     def _ir(self, r):
-        L = self.lista()
+        L = self.lista(); r = self._idx(r)
         if 0 <= r < len(L):
             self.ir.emit(L[r]['t0'] + min(L[r]['dur'], 7.5) / 2, -1)
 
     def _ordenar(self, col):
         L = self.lista()
-        clave = [lambda t: t['t0'], lambda t: t.get('ann', ''), lambda t: not t.get('auto'), lambda t: t['dur'], lambda t: str(t['chans'])][col]
+        clave = [lambda t: not t.get('imprimir', True), lambda t: t['t0'], lambda t: t.get('ann', ''), lambda t: not t.get('auto'), lambda t: t['dur'], lambda t: str(t['chans'])][col]
         L.sort(key=clave); self.mostrar(self.ex); self.cambio.emit()
 
     def _editar(self):
-        r = self.tabla.currentRow(); L = self.lista()
+        r = self._idx(self.tabla.currentRow()); L = self.lista()
         if 0 <= r < len(L):
             d = DialogoTira(self.ex, L[r], self)
             if d.exec():
                 L[r] = d.valor(); L[r]['auto'] = False; self.mostrar(self.ex); self.cambio.emit()
 
     def _borrar(self):
-        rows = sorted({i.row() for i in self.tabla.selectedIndexes()}, reverse=True); L = self.lista()
+        rows = sorted({self._idx(i.row()) for i in self.tabla.selectedIndexes()}, reverse=True); L = self.lista()
         for r in rows:
             if 0 <= r < len(L):
                 L.pop(r)
         self.mostrar(self.ex); self.cambio.emit()
 
     def _mover(self, d):
-        r = self.tabla.currentRow(); L = self.lista()
-        if 0 <= r < len(L) and 0 <= r + d < len(L):
-            L[r], L[r + d] = L[r + d], L[r]; self.mostrar(self.ex); self.tabla.selectRow(r + d); self.cambio.emit()
+        f = self.tabla.currentRow(); L = self.lista()
+        if 0 <= f + d < len(self.vis):
+            r, r2 = self._idx(f), self._idx(f + d)
+            L[r], L[r2] = L[r2], L[r]; self.mostrar(self.ex); self.tabla.selectRow(f + d); self.cambio.emit()
 
     def _artefacto(self):
-        r = self.tabla.currentRow(); L = self.lista()
+        r = self._idx(self.tabla.currentRow()); L = self.lista()
         if 0 <= r < len(L):
             t = L.pop(r); self.mostrar(self.ex); self.excluir.emit(t['t0'], t['t0'] + t['dur'])
 

@@ -162,6 +162,35 @@ class Informe:
         if extra:
             y = self.nueva(); self._html('<h2>Hallazgos de conducción y morfología</h2>' + extra, y)
 
+    # ---- secciones de medilog Darwin2
+    def _seccion(self, titulo, fn):
+        try:
+            h = fn(self.ex)
+        except Exception as e:  # noqa: BLE001  una sección con problemas no debe impedir el informe
+            h = f'<p>No se pudo calcular esta sección: {e}</p>'
+        if h:
+            y = self.nueva(); self._html(f'<h2>{titulo}</h2>' + h, y)
+
+    def tabular(self):
+        from .darwin_arritmias import html_tabular
+        self._seccion('Resumen tabular de día y de noche', html_tabular)
+
+    def vfc(self):
+        from .darwin_vfc import html_vfc
+        self._seccion('Variabilidad de la frecuencia cardíaca', html_vfc)
+
+    def qt(self):
+        from .darwin_vfc import html_qt
+        self._seccion('QT y QTc', html_qt)
+
+    def st(self):
+        from .darwin_vfc import html_st
+        self._seccion('Episodios del ST', html_st)
+
+    def mediciones(self):
+        from .darwin_latidos import html_mediciones
+        self._seccion('Mediciones manuales de latidos', html_mediciones)
+
     def narrativo(self):
         y = self.nueva()
         txt = narrativo(self.ex, self.cfg.value('narrativa', '') or None)
@@ -290,7 +319,7 @@ class Informe:
                 self.p.drawText(QRectF(r.left() + 1 * mm, r.top() + 0.5 * mm, r.width(), 4 * mm), Qt.AlignLeft, f'#{i + 1} · {CLS_NAME[k]} · {_f(n)} latidos')
 
     def tiras(self):
-        ex = self.ex; L = [t for t in self.ses.get('tiras', [])][:400]; mm = self.mm
+        ex = self.ex; L = [t for t in self.ses.get('tiras', []) if t.get('imprimir', True)][:400]; mm = self.mm
         if not L:
             return
         por_pag = 3
@@ -388,7 +417,8 @@ class Informe:
         self._empezar(printer)
         s = self.op.get('secciones', {})
         try:
-            for k in ('portada', 'estadisticas', 'narrativo', 'holterai', 'perfiles', 'tendencias', 'plantillas', 'tiras', 'completa'):
+            for k in ('portada', 'estadisticas', 'narrativo', 'holterai', 'tabular', 'perfiles', 'tendencias', 'vfc', 'qt', 'st', 'mediciones',
+                      'plantillas', 'tiras', 'completa'):
                 if s.get(k, k in ('portada', 'estadisticas')):
                     getattr(self, k)()
             if self.primera:

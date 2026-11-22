@@ -10,7 +10,7 @@ from xml.sax.saxutils import escape
 import numpy as np
 from PySide6.QtCore import QProcess, QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QIcon, QKeySequence
-from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow, QMessageBox, QProgressBar, QProgressDialog,
+from PySide6.QtWidgets import (QApplication, QDockWidget, QFileDialog, QLabel, QMainWindow, QMessageBox, QProgressBar, QProgressDialog,
                                QSplitter, QTabWidget)
 
 from . import __version__
@@ -26,6 +26,12 @@ from .sesion import Sesion
 from .tira import DURACIONES, GANANCIAS, PanelECG
 from .tiras import POR_DEFECTO, DialogoTira, DialogoTirasAuto, VistaTiras, anotacion_en, generar_auto, nueva_tira
 from .vistas import VistaCriterios, VistaEventos, VistaHistogramas, VistaPlantillas, VistaTendencias, VistaValidacion
+from .darwin_arritmias import VistaArritmias, VistaBandas
+from .darwin_latidos import VistaAuricular, VistaCascada, VistaECHO, VistaMedidor
+from .darwin_ruido import VistaMinMax, VistaRuido
+from .darwin_vfc import VistaQTST, VistaVFC
+from .darwin_ajustes import (FLUJO_DEF, NOTA_PRESET, PRESET_DARWIN, DialogoAtajos, DialogoSueno, PanelFlujo, exportar_criterios,
+                             importar_criterios)
 
 
 def es_hscribe(p):
@@ -41,8 +47,13 @@ FILTRO = ('Exámenes Holter (*.hea *.dat *.edf *.bdf *.ecg *.ish *.isn *.txt *.c
 # pestañas: (atributo, nombre, atajo)
 PESTANAS = [('v_pf', 'Perfil', 'Alt+1'), ('v_pr', 'Prospectiva', 'Alt+2'), ('v_tr', 'Tendencias', 'Alt+3'), ('v_su', 'Superposición', 'Alt+4'),
             ('v_pl', 'Plantillas', 'Alt+5'), ('v_hi', 'Histogramas', 'Alt+7'), ('v_ti', 'Tiras', 'Alt+8'), ('v_res', 'Resumen', 'Alt+9'),
-            ('v_ev', 'Eventos', 'Alt+0'), ('v_cr', 'Criterios', ''), ('v_va', 'Validación', '')]
-OCULTABLES = ('Perfil', 'Prospectiva', 'Tendencias', 'Superposición', 'Plantillas', 'Histogramas', 'Eventos', 'Validación')
+            ('v_ev', 'Eventos', 'Alt+0'), ('v_cr', 'Criterios', ''), ('v_va', 'Validación', ''),
+            # pestañas tomadas de medilog Darwin2 (docs/INVENTARIO-DARWIN2.md)
+            ('v_ar', 'Arritmias', ''), ('v_ba', 'Bandas', ''), ('v_ru', 'Ruido', ''), ('v_mm', 'Mín./Máx.', ''), ('v_ca', 'Cascada', ''),
+            ('v_au', 'Auricular', ''), ('v_ec', 'ECHOView', ''), ('v_vf', 'VFC', ''), ('v_qt', 'QT y ST', ''), ('v_me', 'Medidor', '')]
+OCULTABLES = ('Perfil', 'Prospectiva', 'Tendencias', 'Superposición', 'Plantillas', 'Histogramas', 'Eventos', 'Validación',
+              'Arritmias', 'Bandas', 'Ruido', 'Mín./Máx.', 'Cascada', 'Auricular', 'ECHOView', 'VFC', 'QT y ST', 'Medidor')
+DARWIN = ('v_ar', 'v_ba', 'v_ru', 'v_mm', 'v_ca', 'v_au', 'v_ec', 'v_vf', 'v_qt', 'v_me')
 
 
 class Principal(QMainWindow):
@@ -63,6 +74,8 @@ class Principal(QMainWindow):
         self.v_pf = VistaPerfil(); self.v_pr = VistaProspectiva(); self.v_tr = VistaTendencias(); self.v_su = VistaSuperposicion()
         self.v_pl = VistaPlantillas(); self.v_hi = VistaHistogramas(); self.v_ti = VistaTiras(); self.v_res = VistaResumen()
         self.v_ev = VistaEventos(); self.v_cr = VistaCriterios(); self.v_va = VistaValidacion()
+        self.v_ar = VistaArritmias(); self.v_ba = VistaBandas(); self.v_ru = VistaRuido(); self.v_mm = VistaMinMax(); self.v_ca = VistaCascada()
+        self.v_au = VistaAuricular(); self.v_ec = VistaECHO(); self.v_vf = VistaVFC(); self.v_qt = VistaQTST(); self.v_me = VistaMedidor()
         for at, n, _ in PESTANAS:
             self.tabs.addTab(getattr(self, at), n)
         self.v_pr.set_panel(self.panel)
@@ -81,9 +94,24 @@ class Principal(QMainWindow):
         self.v_pl.borrar_plantillas.connect(self.borrar_plantillas)
         self.v_cr.aplicar.connect(self.aplicar_criterios); self.v_cr.reescanear.connect(self.reescanear)
         self.v_ti.excluir.connect(self.excluir); self.v_ti.pedir_auto.connect(self.tiras_auto)
+        self.v_ti.elegida.connect(self._tira_elegida)
         self.v_pr.estado.connect(lambda m: self.estado.setText(m))
+        for at in DARWIN:
+            v = getattr(self, at)
+            if hasattr(v, 'ir'):
+                v.ir.connect(self.ir_a)
+            if hasattr(v, 'nav'):
+                v.nav.connect(self.set_nav)
+            if hasattr(v, 'borrar_suceso'):
+                v.borrar_suceso.connect(self.borrar_suceso)
+            if hasattr(v, 'reetiquetar'):
+                v.reetiquetar.connect(self.reetiquetar)
+        self.v_ba.cambio.connect(self._cambio_tiras); self.v_qt.cambio.connect(self._cambio_sesion); self.v_me.cambio.connect(self._cambio_sesion)
+        self.v_ru.exclusiones.connect(self.fijar_exclusiones); self.v_ec.excluir.connect(self.excluir)
+        self.v_mm.fijar.connect(self.fijar_minmax)
         t = self.panel.tira
         t.reetiquetar.connect(self.reetiquetar); t.excluir.connect(self.excluir); t.latido_elegido.connect(self._info_latido)
+        t.latido_elegido.connect(self.v_me.set_latido); t.intervalo.connect(self.accion_intervalo)
         t.insertar.connect(self.insertar); t.borrar.connect(self.borrar_latidos); t.aprender.connect(lambda tid, k: self.reetiquetar_plantillas([tid], k))
         t.mostrar_plantilla.connect(self.ver_plantilla); t.pedir_tira.connect(self.pedir_tira)
         t.agregar_suceso.connect(self.agregar_suceso); t.borrar_suceso.connect(self.borrar_suceso); t.editar_suceso.connect(self.editar_suceso)
@@ -91,6 +119,12 @@ class Principal(QMainWindow):
         t.tiempo_cambiado.connect(self._tiempo)
         self.tabs.currentChanged.connect(self._pestana)
         self._menus()
+        self._aplicar_atajos()
+        self.flujo = PanelFlujo(json.loads(self.cfg.value('flujo', '') or 'null') or FLUJO_DEF, [n for _, n, _ in PESTANAS])
+        self.flujo.abrir.connect(self._abrir_paso); self.flujo.editado.connect(lambda L: self.cfg.setValue('flujo', json.dumps(L)))
+        self.dock_flujo = QDockWidget('Flujo de trabajo', self); self.dock_flujo.setWidget(self.flujo); self.dock_flujo.setObjectName('flujo')
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.dock_flujo); self.dock_flujo.setVisible(False)
+        self.dock_flujo.visibilityChanged.connect(lambda v: self.a_flujo.setChecked(v))
         self.estado = QLabel('Listo.'); self.statusBar().addWidget(self.estado, 1)
         self.barra = QProgressBar(); self.barra.setMaximumWidth(260); self.barra.setVisible(False); self.statusBar().addPermanentWidget(self.barra)
         self.ha_proc = None; self.ha_timer = QTimer(self); self.ha_timer.timeout.connect(self._ha_poll)
@@ -187,11 +221,98 @@ class Principal(QMainWindow):
                            ('estacion', 'Estación (rápido, solo el motor de la estación)')):
             a = QAction(txt, self, checkable=True); a.setChecked(actual == clave); a.setData(clave); gr.addAction(a); mo.addAction(a)
         gr.triggered.connect(lambda a: self.cfg.setValue('motor', a.data()))
+        aj = mb.addMenu('A&justes')
+        self._acc(aj, 'Periodo de sueño (día y noche)…', self.periodo_sueno)
+        self._acc(aj, 'Cargar los criterios de arritmia de Darwin2', self.criterios_darwin)
+        self._acc(aj, 'Exportar criterios de escaneo…', self.exportar_criterios)
+        self._acc(aj, 'Importar criterios de escaneo…', self.importar_criterios)
+        self._acc(aj, 'Guardar estos criterios como predeterminados', self.criterios_predeterminados)
+        aj.addSeparator()
+        self._acc(aj, 'Atajos de teclado…', self.configurar_atajos)
+        self.a_flujo = self._acc(aj, 'Panel de flujo de trabajo', self._flujo_visible, 'Ctrl+W', False)
         ay = mb.addMenu('A&yuda')
         self._acc(ay, 'Atajos de teclado', self.atajos)
         self._acc(ay, 'Acerca de HolterLocal', self.acerca)
         for sc, fn in (('F7', self._f7), ('F8', self._f8)):
             a = QAction(self); a.setShortcut(QKeySequence(sc)); a.triggered.connect(fn); self.addAction(a)
+
+    # ---- ajustes de Darwin2
+    def _flujo_visible(self):
+        self.dock_flujo.setVisible(self.a_flujo.isChecked())
+
+    def _abrir_paso(self, nombre):
+        for at, n, _ in PESTANAS:
+            if n == nombre:
+                self._ver(at); self.flujo.marcar(nombre); return
+
+    def _acciones_menu(self):
+        """(ruta del menú › acción, QAction) de todas las acciones de los menús. No usa QAction.menu(), que en PySide6
+        puede dejar el submenú en manos de Python y borrarlo."""
+        from PySide6.QtWidgets import QMenu
+        menus = self.menuBar().findChildren(QMenu)
+        vivas = [m.menuAction() for m in menus]          # se guardan vivas para que id() no se repita
+        de_menu = {id(a) for a in vivas}
+        out = []
+        for m in menus:
+            ruta = []; w = m
+            while isinstance(w, QMenu):
+                ruta.insert(0, w.title().replace('&', '')); w = w.parentWidget()
+            for a in m.actions():
+                if a.isSeparator() or id(a) in de_menu or not a.text():
+                    continue
+                out.append((' › '.join(ruta + [a.text().split('\t')[0]]), a))
+        return out
+
+    def _aplicar_atajos(self):
+        try:
+            d = json.loads(self.cfg.value('atajos', '') or '{}')
+        except ValueError:
+            d = {}
+        for clave, a in self._acciones_menu():
+            if clave in d:
+                a.setShortcut(QKeySequence(d[clave]))
+
+    def configurar_atajos(self):
+        acc = self._acciones_menu()
+        d = DialogoAtajos(acc, self)
+        if not d.exec():
+            return
+        if d.fabrica:
+            self.cfg.setValue('atajos', '{}')
+            QMessageBox.information(self, 'Atajos', 'Los atajos de fábrica vuelven al abrir de nuevo HolterLocal.'); return
+        v = d.valores(); self.cfg.setValue('atajos', json.dumps(v)); self._aplicar_atajos()
+
+    def periodo_sueno(self):
+        if not self.ses:
+            QMessageBox.information(self, 'Periodo de sueño', 'Abre primero un examen.'); return
+        d = DialogoSueno(self.ses.d.get('sueno') or {}, self)
+        if d.exec():
+            self.ses.d['sueno'] = d.valores(); self.refrescar(); self._cambio_sesion()
+
+    def criterios_darwin(self):
+        v = dict(self.v_cr.valores()); v.update(PRESET_DARWIN); self.v_cr.cargar(v); self._ver('v_cr')
+        QMessageBox.information(self, 'Criterios de Darwin2', 'Se cargaron en la pestaña Criterios (revísalos y pulsa «Aplicar criterios y recalcular»).\n\n' + NOTA_PRESET)
+
+    def exportar_criterios(self):
+        p, _ = QFileDialog.getSaveFileName(self, 'Exportar criterios', os.path.join(self.cfg.value('carpeta', os.path.expanduser('~')), 'criterios.json'),
+                                           'Criterios (*.json)')
+        if p:
+            exportar_criterios(self.v_cr.valores(), p); self.estado.setText('Criterios exportados a ' + p)
+
+    def importar_criterios(self):
+        p, _ = QFileDialog.getOpenFileName(self, 'Importar criterios', self.cfg.value('carpeta', os.path.expanduser('~')), 'Criterios (*.json)')
+        if not p:
+            return
+        try:
+            d = importar_criterios(p)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, 'Importar criterios', str(e)); return
+        v = dict(self.v_cr.valores()); v.update(d); self.v_cr.cargar(v); self._ver('v_cr')
+        self.estado.setText('Criterios importados: revísalos y pulsa «Aplicar criterios y recalcular».')
+
+    def criterios_predeterminados(self):
+        self.cfg.setValue('criterios', json.dumps(self.v_cr.valores()))
+        self.estado.setText('Estos criterios se usarán por defecto en los exámenes nuevos.')
 
     def _ver(self, at):
         if self.split.sizes()[0] < 50:
@@ -465,6 +586,13 @@ class Principal(QMainWindow):
 
     def _ha_listo(self, res, ha):
         self.ex.ha = ha
+        try:   # datos por latido de holterai para el análisis auricular (PR) y el ancho del QRS
+            d = self.ha_out
+            ht = np.fromfile(os.path.join(d, 'ha_t.bin'), float)
+            lee = lambda n: np.fromfile(os.path.join(d, n), np.float32) if os.path.isfile(os.path.join(d, n)) else None
+            self.ex.ha_lat = {'t': ht, 'pr': lee('ha_pr.bin'), 'ancho': lee('ha_ancho.bin')}
+        except OSError:
+            self.ex.ha_lat = None
         self._actualizado(res)
         self.panel.tira.sel = -1
         self.estado.setText(f'Análisis de holterai listo: {ha["n"]:,} latidos en {ha["elapsed"]:.0f} s'.replace(',', '.'))
@@ -484,7 +612,8 @@ class Principal(QMainWindow):
 
     def refrescar(self):
         ex = self.ex
-        for v in (self.v_pf, self.v_pr, self.v_tr, self.v_su, self.v_pl, self.v_hi, self.v_ti, self.v_res, self.v_ev, self.v_va):
+        for v in (self.v_pf, self.v_pr, self.v_tr, self.v_su, self.v_pl, self.v_hi, self.v_ti, self.v_res, self.v_ev, self.v_va,
+                  *(getattr(self, at) for at in DARWIN)):
             try:
                 v.mostrar(ex)
             except Exception as e:  # noqa: BLE001  una vista con problemas no debe tumbar la ventana
@@ -508,9 +637,15 @@ class Principal(QMainWindow):
         self.panel.ir_a(t, b)
 
     def _tiempo(self, t0):
-        self.v_tr.set_tiempo(t0 + self.panel.tira.ancho_seg() / 2)
+        tc = t0 + self.panel.tira.ancho_seg() / 2
+        self.v_tr.set_tiempo(tc)
+        for v in (self.v_ar, self.v_ec):
+            if v.isVisible():
+                v.set_tiempo(tc)
 
     def _pestana(self, i):
+        if hasattr(self, 'flujo'):
+            self.flujo.marcar(self.tabs.tabText(i))
         if self.tabs.widget(i) is self.v_su and self.ex:
             self.v_su.desde(self.panel.tira.t0)
 
@@ -567,7 +702,7 @@ class Principal(QMainWindow):
         self.estado.setText(txt)
 
     def ver_plantilla(self, tid):
-        self._ver('v_pl'); self.v_pl.elegir(tid)
+        self._ver('v_pl'); self.v_pl.elegir(tid); self.v_ca.set_plantilla(tid)
 
     # =================================================================== correcciones
     def _llamar(self, cmd, **kw):
@@ -681,6 +816,76 @@ class Principal(QMainWindow):
         elif k in ('u1', 'u2', 'u3'):
             self.ses.d['sucesos_usuario'].append({'k': int(k[1]), 't0': float(a), 't1': float(b)})
             self.ex.sumar_sesion(); self.refrescar(); self._cambio_sesion()
+
+    def accion_intervalo(self, k, a, b):
+        """Herramientas de intervalo de la tira (Darwin2)."""
+        ex = self.ex
+        if not ex:
+            return
+        b0, b1 = (int(x) for x in np.searchsorted(ex.t, [a, b]))
+        lat = list(range(b0, b1))
+        if k in ('artifact', 'af', 'noaf'):
+            self.agregar_suceso(k, a, b)
+        elif k == 'incluir':
+            excl = [e for e in (ex.A.get('exclusions') or []) if not (e[0] < b and e[1] > a)]
+            incl = list(ex.A.get('inclusions') or []) + [[float(a), float(b)]]
+            self.motor.llamar('setExclusions', self._tras_artefacto, self._error, list=excl, incl=incl)
+        elif k == 'borrar':
+            if lat and QMessageBox.question(self, 'Intervalo', f'¿Borrar {len(lat):,} latidos?'.replace(',', '.')) == QMessageBox.Yes:
+                self.borrar_latidos(lat)
+        elif k.startswith('cls'):
+            if lat and (len(lat) < 200 or QMessageBox.question(self, 'Intervalo', f'¿Etiquetar {len(lat):,} latidos?'.replace(',', '.')) == QMessageBox.Yes):
+                self.reetiquetar(lat, int(k[3:]))
+        elif k == 'diario':
+            from PySide6.QtWidgets import QInputDialog
+            txt, ok = QInputDialog.getText(self, 'Comentario', f'Comentario para {ex.reloj(a)} – {ex.reloj(b)}')
+            if ok and txt.strip():
+                self.ses.d.setdefault('diario', []).append({'t': float(a), 'texto': txt.strip()})
+                ex.sumar_sesion(); self.refrescar(); self._cambio_sesion()
+        elif k in ('fc_max', 'fc_min'):
+            bb = ex.latido_cercano(a, 0.5)
+            if bb >= 2:
+                s3 = float(np.nansum(ex.rr[bb - 2:bb + 1]))
+                if s3 > 0:
+                    self.fijar_minmax(k, bb, 180.0 / s3)
+
+    def _tira_elegida(self, k, t0):
+        """Si el médico elige otra tira de FC máxima o mínima, ese latido pasa a ser el valor del resumen."""
+        ex = self.ex
+        if not ex or k not in ('hrmax', 'hrmin'):
+            return
+        b = ex.latido_cercano(t0 + 3.75, 1.0)
+        if b >= 2:
+            s3 = float(np.nansum(ex.rr[b - 2:b + 1]))
+            if s3 > 0:
+                self.fijar_minmax('fc_max' if k == 'hrmax' else 'fc_min', b, 180.0 / s3)
+
+    def _cambio_tiras(self):
+        self.v_ti.mostrar(self.ex); self._cambio_sesion()
+
+    def fijar_exclusiones(self, excl, incl):
+        """Directorio de ruido: lista completa de tramos excluidos e incluidos."""
+        if self.ex:
+            self.motor.llamar('setExclusions', self._tras_artefacto, self._error, list=[[float(a), float(b)] for a, b in excl],
+                              incl=[[float(a), float(b)] for a, b in incl])
+
+    def fijar_minmax(self, clave, b, v):
+        """Escáner mín./máx.: el valor elegido reemplaza al automático en el resumen y en las tiras de FC/RR extremos."""
+        ex = self.ex
+        if not ex or not (0 <= b < len(ex.t)):
+            return
+        txt = ('%d lpm' % round(v)) if clave.startswith('fc') else ('%s s' % ('%.2f' % (v / 1000.0)).replace('.', ','))
+        self.ses.d.setdefault('minmax_fijado', {})[clave] = {'b': int(b), 't': float(ex.t[b]), 'v': float(v), 'texto': txt}
+        self.ses.d.setdefault('resumen_override', {})[clave] = txt
+        self.ses.d.setdefault('planilla_elegida', {}).pop({'fc_max': 'hrmax', 'fc_min': 'hrmin'}.get(clave, ''), None)
+        pref = ('mm:', 'pl:')
+        L = self.ses.d['tiras']
+        if any(t.get('auto') and str(t.get('clave', '')).startswith(pref) for t in L):
+            op = self.ses.d.get('informe', {}).get('auto') or POR_DEFECTO
+            nuevas = [t for t in generar_auto(ex, op) if str(t.get('clave', '')).startswith(pref)]
+            self.ses.d['tiras'] = [t for t in L if not (t.get('auto') and str(t.get('clave', '')).startswith(pref))] + nuevas
+        self.refrescar(); self._cambio_sesion()
+        self.estado.setText(f'{ {"fc_max": "FC máxima", "fc_min": "FC mínima", "rr_max": "RR más largo", "rr_min": "RR más corto"}[clave]} fijada en {txt} ({ex.reloj(float(ex.t[b]))}).')
 
     def borrar_suceso(self, ev):
         ex = self.ex; ty = ev['type']
@@ -1005,7 +1210,7 @@ def autoprueba(win, carpeta, rutas):
             elif p <= n_tabs:
                 win.tabs.setCurrentIndex(p - 1)
                 QApplication.processEvents()
-                win.grab().save(os.path.join(carpeta, f'pantalla_{p:02d}_{win.tabs.tabText(p - 1)}.png'))
+                win.grab().save(os.path.join(carpeta, f'pantalla_{p:02d}_{win.tabs.tabText(p - 1).replace("/", "-").replace(".", "")}.png'))
                 if win.tabs.currentWidget() is win.v_va and ex.ref is not None:
                     escribir('validación: ' + win.v_va.toPlainText().replace('\n', ' | ')[:600])
                 if win.tabs.currentWidget() is win.v_pr:
@@ -1040,12 +1245,32 @@ def autoprueba(win, carpeta, rutas):
                 win.agregar_suceso(1, float(ex.t[200]), float(ex.t[200]) + 20)
                 win.aplicar_tiras_auto(POR_DEFECTO)
                 escribir(f'tiras automáticas: {len(ex.sesion.d["tiras"])}')
-                escribir('  planilla: ' + '; '.join(f'{t["clave"][3:]} {ex.reloj(t["t0"])} {t["ann"]}' for t in ex.sesion.d['tiras']
-                                                if str(t.get('clave', '')).startswith('pl:')))
+                escribir('  planilla impresa: ' + '; '.join(f'{t["clave"][3:]} {ex.reloj(t["t0"])} {t["ann"]} ({t["n_cand"]} cand.)'
+                                                         for t in ex.sesion.d['tiras'] if str(t.get('clave', '')).startswith('pl:') and t.get('imprimir')))
+                escribir('  candidatas FC mínima: ' + '; '.join(t['ann'] for t in ex.sesion.d['tiras'] if t.get('clave') == 'pl:hrmin'))
                 win.tabs.setCurrentWidget(win.v_ti); QApplication.processEvents()
                 win.grab().save(os.path.join(carpeta, 'pantalla_tiras_auto.png'))
+                # piezas de Darwin2: fijar la FC máxima a mano, periodo de sueño, flujo de trabajo y atajos
+                bmx = len(ex.t) // 3
+                win.fijar_minmax('fc_max', bmx, 150.0)
+                ok_mm = any(t['clave'] == 'pl:hrmax' and abs(t['t0'] - (float(ex.t[bmx]) - 3.75)) < 0.01 for t in ex.sesion.d['tiras'])
+                win.tabs.setCurrentWidget(win.v_ti); win.v_ti.mostrar(ex)
+                ia = win.v_ti.apartado.findData('Frecuencia mínima'); win.v_ti.apartado.setCurrentIndex(ia)
+                if win.v_ti.tabla.rowCount() >= 3:
+                    win.v_ti.tabla.selectRow(2); win.v_ti._elegir()
+                imp = [t for t in ex.sesion.d['tiras'] if t.get('clave') == 'pl:hrmin' and t.get('imprimir')]
+                escribir(f'elegir 3.ª candidata de FC mínima: {len(imp)} impresa ({imp[0]["ann"] if imp else "—"}); resumen FC mín {ex.sesion.d["resumen_override"].get("fc_min")}')
+                QApplication.processEvents(); win.grab().save(os.path.join(carpeta, 'pantalla_candidatas.png'))
+                win.v_ti.apartado.setCurrentIndex(0)
+                ex.sesion.d['sueno'] = {'luces': '22:00', 'dormir': '22:30', 'despierto': '06:30'}
+                win.a_flujo.setChecked(True); win._flujo_visible(); win.flujo.paso(1); QApplication.processEvents()
+                win.grab().save(os.path.join(carpeta, 'pantalla_flujo.png')); win.a_flujo.setChecked(False); win._flujo_visible()
+                escribir(f'darwin: FC máx fijada → resumen {ex.sesion.d["resumen_override"].get("fc_max")}, tira movida {ok_mm}; '
+                         f'{len(win._acciones_menu())} acciones con atajo configurable; flujo en «{win.tabs.tabText(win.tabs.currentIndex())}»')
                 op = dict(win._opciones_informe())
                 op['secciones'] = {k: True for k in op['secciones']}; op['completa_horas'] = [1]
+                from .dialogos import SECCIONES
+                op['secciones'].update({k: True for k, _ in SECCIONES})
                 win.exportar_pdf(os.path.join(carpeta, 'informe.pdf'), op)
                 win.exportar_csv(os.path.join(carpeta, 'latidos.csv')); win.exportar_xml(os.path.join(carpeta, 'resumen.xml'))
                 escribir('pdf %d bytes, csv %d bytes, xml %d bytes' % tuple(os.path.getsize(os.path.join(carpeta, f))

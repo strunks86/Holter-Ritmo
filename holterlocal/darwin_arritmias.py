@@ -482,3 +482,44 @@ class VistaBandas(QWidget):
             v.addWidget(QLabel('No hay sucesos de este tipo.'))
         v.addStretch(1)
         self.scroll.setWidget(w)
+
+
+def html_tabular(ex):
+    """Resumen tabular para el informe: cada tipo de arritmia de día, de noche y en el registro completo (Darwin2, 4.2.17)."""
+    from .darwin_vfc import eventos_qt_largo
+    by = tipos_presentes(eventos_darwin(ex, eventos_qt_largo(ex)))
+    M = ex.A.get('minute') or {}
+    arr = lambda k: np.array([np.nan if v is None else v for v in M.get(k, [])], float)
+    hr, hmn, hmx = arr('hr'), arr('hrMin'), arr('hrMax')
+    tm = np.arange(len(hr)) * 60 + 30
+    nm = es_noche(ex, tm) if len(tm) else np.zeros(0, bool)
+    nb = es_noche(ex, ex.t) if len(ex.t) else np.zeros(0, bool)
+    partes = [('Día', ~nm, ~nb, False), ('Noche', nm, nb, True), ('Registro completo', np.ones(len(hr), bool), np.ones(len(ex.t), bool), None)]
+    def f(fn, a, m):
+        x = a[m] if m.any() else a[:0]
+        return fmt(fn(x)) if len(x) and np.isfinite(x).any() else '—'
+    cls = np.asarray(ex.cls)
+    filas = [('FC mínima (lpm)', [f(np.nanmin, hmn, mm) for _, mm, _, _ in partes]),
+             ('FC media (lpm)', [f(np.nanmean, hr, mm) for _, mm, _, _ in partes]),
+             ('FC máxima (lpm)', [f(np.nanmax, hmx, mm) for _, mm, _, _ in partes]),
+             ('Latidos totales', [fmt(int(mb.sum())) for _, _, mb, _ in partes]),
+             ('Latidos supraventriculares', [fmt(int((mb & (cls == 1)).sum())) for _, _, mb, _ in partes]),
+             ('Latidos ventriculares', [fmt(int((mb & np.isin(cls, (2, 3, 8, 10, 11))).sum())) for _, _, mb, _ in partes])]
+    for k, _ in COLS_TAB:
+        evs = by.get(k)
+        if not evs:
+            continue
+        noche = es_noche(ex, [e['t0'] for e in evs])
+        cel = []
+        for _, _, _, n in partes:
+            sel = [e for e, x in zip(evs, noche) if n is None or bool(x) == n]
+            d = sum(max(0.0, e['t1'] - e['t0']) for e in sel)
+            cel.append(f'{fmt(len(sel))}' + (f' · {fmt(d / 60, 1)} min' if d >= 30 else '') if sel else '0')
+        filas.append((nombre(ex, k, evs[0]), cel))
+    from .darwin_comun import sueno
+    s = sueno(ex)
+    h = (f'<p>Noche = periodo de sueño del diario ({s["dormir"]} a {s["despierto"]}). Cantidad de episodios y, si suman más de 30 s, su duración.</p>'
+         '<table><tr><th></th><th>Día</th><th>Noche</th><th>Registro completo</th></tr>')
+    for lab, c in filas:
+        h += f'<tr><td>{lab}</td>' + ''.join(f'<td class="n">{x}</td>' for x in c) + '</tr>'
+    return h + '</table>'

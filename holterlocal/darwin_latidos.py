@@ -185,7 +185,6 @@ class VistaCascada(Perezosa, QWidget):
             w.currentIndexChanged.connect(lambda *_: self._calcular_seguro())
         self.gan.currentIndexChanged.connect(lambda *_: self._vista())
         self.esp.valueChanged.connect(lambda *_: self._vista())
-        self.lienzo.elegido.connect(lambda b: self.ir.emit(float(self.ex.t[b]), b) if False else None)
         self.lienzo.ir.connect(lambda b: self.ir.emit(float(self.ex.t[b]), b))
         self.lienzo.reetiquetar.connect(self.reetiquetar.emit)
 

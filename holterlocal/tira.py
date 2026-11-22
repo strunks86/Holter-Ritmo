@@ -160,6 +160,7 @@ class Tira(QWidget):
     detalles_st = Signal(dict)
     navegar = Signal(int)                         # Tab / Mayús+Tab
     vista_cambiada = Signal()
+    intervalo = Signal(str, float, float)         # herramientas de intervalo de Darwin2: acción, desde, hasta
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -187,6 +188,7 @@ class Tira(QWidget):
         self.t_raton = None
         self.inicio_suceso = None
         self.titulo_nav = ''
+        self.marcador = None                      # marcador de intervalo (Darwin2: [marcador – actual])
         self._drag = None
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMouseTracking(True)
@@ -393,6 +395,10 @@ class Tira(QWidget):
             xa = self.x_de(self.t_raton); w = self.tira_dur * pxs
             p.setPen(QPen(QColor('#dc2626'), 2)); p.setBrush(Qt.NoBrush); p.drawRect(QRectF(xa, top, w, H - top - 2))
             p.setFont(f3); p.drawText(QPointF(xa + 4, top + 12), '%s · %s s' % (ex.reloj(self.t_raton), str(self.tira_dur).replace('.', ',')))
+        if self.marcador is not None and self.t0 <= self.marcador <= self.t0 + self.ancho_seg():
+            li, xm = self.pos(self.marcador); ya = self.top() + li * self.alto_linea()
+            p.setPen(QPen(QColor('#7c3aed'), 1.5, Qt.DashLine)); p.drawLine(QPointF(xm, ya), QPointF(xm, ya + self.alto_linea()))
+            p.setFont(f3); p.setPen(QColor('#7c3aed')); p.drawText(QPointF(xm + 3, ya + 11), 'Marcador ' + ex.reloj(self.marcador))
         if self.titulo_nav:
             p.setFont(f2); r = QRectF(W / 2 - 180, 1, 360, 16)
             p.fillRect(r, QColor(255, 255, 255, 200)); p.setPen(QColor('#0b57d0')); p.drawText(r, Qt.AlignCenter, self.titulo_nav)
@@ -678,9 +684,38 @@ class Tira(QWidget):
             m.addAction('Marcar %.1f s como artefacto (no se informa)' % (z - a), lambda: self.excluir.emit(a, z))
             m.addAction('Medir: %.0f ms, %d latidos' % ((z - a) * 1000, len(sel)))
         m.addSeparator()
+        self._menu_intervalos(m, float(t))
+        m.addSeparator()
         m.addAction('Mover al centro\tAlt+clic', lambda: self.ir_a(t))
         m.addAction('Agregar una tira de 7,5 s aquí', lambda: self.pedir_tira.emit(float(t), 7.5, 0))
         m.exec(g)
+
+    def _menu_intervalos(self, m, t):
+        """Herramientas de selección de Darwin2: marcador e intervalos [marcador–actual], [inicio–actual] y [actual–final]."""
+        mi = m.addMenu('Intervalo')
+        mi.addAction('Poner el marcador aquí (%s)' % self.ex.reloj(t), lambda: self._poner_marcador(t))
+        if self.marcador is not None:
+            mi.addAction('Quitar el marcador', lambda: self._poner_marcador(None))
+        rangos = []
+        if self.marcador is not None and abs(self.marcador - t) > 0.05:
+            rangos.append(('[marcador – aquí]', min(self.marcador, t), max(self.marcador, t)))
+        rangos += [('[inicio – aquí]', 0.0, t), ('[aquí – final]', t, float(self.ex.dur))]
+        acciones = [('artifact', 'Marcar como artefacto (excluir)'), ('incluir', 'Devolver al análisis (incluir)'), ('af', 'Marcar fibrilación auricular'),
+                    ('noaf', 'Quitar fibrilación auricular'), ('borrar', 'Borrar todos los latidos')]
+        for nom, a, b in rangos:
+            sub = mi.addMenu('%s  %s → %s' % (nom, self.ex.reloj(a), self.ex.reloj(b)))
+            for k, txt in acciones:
+                sub.addAction(txt, lambda k=k, a=a, b=b: self.intervalo.emit(k, a, b))
+            se = sub.addMenu('Etiquetar todos los latidos como')
+            for k in ORDEN_ETIQUETAS:
+                se.addAction(f'{CLS_NAME[k]}', lambda k=k, a=a, b=b: self.intervalo.emit('cls%d' % k, a, b))
+            sub.addAction('Comentario en el diario…', lambda a=a, b=b: self.intervalo.emit('diario', a, b))
+        mi.addSeparator()
+        mi.addAction('Fijar este latido como FC máxima', lambda: self.intervalo.emit('fc_max', t, t))
+        mi.addAction('Fijar este latido como FC mínima', lambda: self.intervalo.emit('fc_min', t, t))
+
+    def _poner_marcador(self, t):
+        self.marcador = t; self.update()
 
     def _nombre_ev(self, ev):
         k = ALIAS_BARRA.get(ev['type'], ev['type'])

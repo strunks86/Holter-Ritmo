@@ -18,6 +18,8 @@ En la pestaña **Actions** de este repositorio, abre la última ejecución verde
 - Paciente, diario, estados del examen (Adquirido, Editado, Revisado, Firmado), Buscar examen y Volver a escanear. El trabajo se guarda solo y se recupera al volver a abrir.
 - Informe final estándar o condensado (portada, estadísticas, narrativo, perfiles, tendencias, plantillas, tiras e información completa) con vista previa, impresión y PDF; exporta latidos a CSV y estadísticas a XML.
 - Qué funciones del manual de HScribe 6.4 tiene: [docs/INVENTARIO-HSCRIBE.md](docs/INVENTARIO-HSCRIBE.md).
+- Opciones tomadas de medilog Darwin2 (0.6.0): pestañas Arritmias (tendencias, bloques y resumen tabular de día y noche), Bandas, Ruido, Mín./Máx., Cascada, Auricular (PR), ECHOView, VFC completa, QT y ST y Medidor; herramientas de intervalo en el ECG, flujo de trabajo, atajos configurables, periodo de sueño y criterios de Darwin. Detalle: [docs/INVENTARIO-DARWIN2.md](docs/INVENTARIO-DARWIN2.md).
+- Planilla de tiras del informe: normal, FC máx./mín., V, pares, tripletas, TV (la más rápida y la más larga), S, pares S, TSV (la más rápida y la más larga) y BAV de 2.º y 3.er grado.
 
 ## Desarrollo
 
