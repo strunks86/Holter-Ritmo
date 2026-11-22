@@ -642,10 +642,11 @@ class Principal(QMainWindow):
         self._actualizado(r)
         # las tiras automáticas de mínimos y máximos se reemplazan por el siguiente suceso
         L = self.ses.d['tiras']
-        if any(t.get('auto') and str(t.get('clave', '')).startswith('mm:') for t in L):
+        pref = ('mm:', 'pl:')
+        if any(t.get('auto') and str(t.get('clave', '')).startswith(pref) for t in L):
             op = self.ses.d.get('informe', {}).get('auto') or POR_DEFECTO
-            nuevas = [t for t in generar_auto(self.ex, op) if str(t.get('clave', '')).startswith('mm:')]
-            self.ses.d['tiras'] = [t for t in L if not (t.get('auto') and str(t.get('clave', '')).startswith('mm:'))] + nuevas
+            nuevas = [t for t in generar_auto(self.ex, op) if str(t.get('clave', '')).startswith(pref)]
+            self.ses.d['tiras'] = [t for t in L if not (t.get('auto') and str(t.get('clave', '')).startswith(pref))] + nuevas
             self.v_ti.mostrar(self.ex)
 
     def aplicar_criterios(self, d):
@@ -1039,6 +1040,8 @@ def autoprueba(win, carpeta, rutas):
                 win.agregar_suceso(1, float(ex.t[200]), float(ex.t[200]) + 20)
                 win.aplicar_tiras_auto(POR_DEFECTO)
                 escribir(f'tiras automáticas: {len(ex.sesion.d["tiras"])}')
+                escribir('  planilla: ' + '; '.join(f'{t["clave"][3:]} {ex.reloj(t["t0"])} {t["ann"]}' for t in ex.sesion.d['tiras']
+                                                if str(t.get('clave', '')).startswith('pl:')))
                 win.tabs.setCurrentWidget(win.v_ti); QApplication.processEvents()
                 win.grab().save(os.path.join(carpeta, 'pantalla_tiras_auto.png'))
                 op = dict(win._opciones_informe())

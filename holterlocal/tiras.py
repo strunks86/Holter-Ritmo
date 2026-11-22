@@ -42,7 +42,17 @@ EV_TIPOS = {'vPair': ['vPair'], 'vRun': ['vt', 'aivr', 'ivr'], 'vBig': ['vBig'],
             'u1': ['u1'], 'u2': ['u2'], 'u3': ['u3'],
             'avb': ['ha_av_block_1', 'ha_av_block_mobitz1', 'ha_av_block_mobitz2', 'ha_av_block_2to1', 'ha_av_block_advanced', 'ha_av_block_complete']}
 EV_CLASES = {'esc': [8], 'aber': [7], 'fus': [3], 'brb': [6], 'desc': [5], 'pa': [12], 'pv': [9], 'pd': [13]}
+# Planilla de tiras pedida por Jorge, en su orden. 'uno' = un solo episodio (el más extremo); 'varios' = cantidad elegible.
+PLANILLA = [('normal', 'Normal (ritmo sinusal de base)', 'uno'), ('hrmax', 'Frecuencia máxima', 'uno'), ('hrmin', 'Frecuencia mínima', 'uno'),
+            ('vIso', 'Extrasístole ventricular', 'varios'), ('vPair', 'Par de extrasístoles ventriculares', 'varios'),
+            ('vTrip', 'Tripleta de extrasístoles ventriculares', 'varios'), ('vt', 'Taquicardia ventricular', 'varios'),
+            ('vt_fast', 'Taquicardia ventricular más rápida', 'uno'), ('vt_long', 'Taquicardia ventricular más larga', 'uno'),
+            ('sIso', 'Extrasístole supraventricular', 'varios'), ('sPair', 'Par de extrasístoles supraventriculares', 'varios'),
+            ('svt_fast', 'Taquicardia supraventricular más rápida', 'uno'), ('svt_long', 'Taquicardia supraventricular más larga', 'uno'),
+            ('avb23', 'Bloqueo AV de segundo y tercer grado', 'varios')]
+AVB_23 = ['ha_av_block_mobitz1', 'ha_av_block_mobitz2', 'ha_av_block_2to1', 'ha_av_block_advanced', 'ha_av_block_complete']
 POR_DEFECTO = {'chans': [0, 1, 2], 'skip_fail': True, 'diario': True, 'periodicas': False, 'offset': '00:00:00', 'intervalo': '01:00:00',
+               'planilla': {k: [True, 1 if modo == 'uno' else 2, 'examen'] for k, _, modo in PLANILLA},
                'minmax': {k: True for k, _ in MINMAX},
                'eventos': {k: [k in ('vPair', 'vRun', 'sRun', 'af', 'pause', 'avb', 'pfc', 'u1', 'u2', 'u3'), 3, 'examen']
                            for _, g in EVENTOS_AUTO for k, _ in g}}
@@ -131,10 +141,107 @@ def _cands_evento(ex, k):
     return out
 
 
+def _cand_normal(ex):
+    """Tramo de 7,5 s solo con latidos normales, con los canales limpios y sin exclusiones, de día si se puede,
+    con la FC más cercana a la mediana del registro."""
+    n = len(ex.t)
+    if n < 10:
+        return None
+    vent = 7.5
+    okN = (np.asarray(ex.cls) == 0)
+    rr = np.asarray(ex.rr, float)
+    rrN = rr[okN & np.isfinite(rr) & (rr > 0.25)]
+    if not len(rrN):
+        return None
+    med = 60.0 / float(np.median(rrN))
+    nseg = int(ex.dur) + 1
+    malo = np.zeros(nseg, bool)
+    for q in ex.qual:
+        q = np.asarray(q)[:nseg]; malo[:len(q)] |= q != 0
+    x = np.asarray(ex.excl)[:nseg]; malo[:len(x)] |= x != 0
+    cm = np.r_[0, np.cumsum(malo)]
+    cn = np.r_[0, np.cumsum(~okN)]
+    t0s = np.arange(5.0, max(5.0, ex.dur - vent - 5.0), vent)
+    if not len(t0s):
+        return None
+    b0 = np.searchsorted(ex.t, t0s); b1 = np.searchsorted(ex.t, t0s + vent)
+    s0 = t0s.astype(int); s1 = np.minimum(nseg, (t0s + vent).astype(int) + 1)
+    limpio = ((b1 - b0) >= 4) & ((cn[b1] - cn[b0]) == 0) & ((cm[s1] - cm[s0]) == 0)
+    if not limpio.any():
+        return None
+    hr = np.full(len(t0s), np.nan)
+    for i in np.nonzero(limpio)[0]:
+        r = rr[b0[i] + 1:b1[i]]; r = r[np.isfinite(r) & (r > 0.25)]
+        if len(r):
+            hr[i] = 60.0 / r.mean()
+    pen = np.abs(hr - med)
+    try:
+        from .darwin_comun import es_noche
+        pen = pen + np.where(es_noche(ex, t0s), 1000.0, 0.0)
+    except Exception:
+        pass
+    if not np.isfinite(pen).any():
+        return None
+    i = int(np.nanargmin(pen))
+    return float(t0s[i]), 'Ritmo de base %d lpm' % round(hr[i])
+
+
+def _cands_planilla(ex, k):
+    """Lista de (inicio de la tira, anotación) para un elemento de la planilla."""
+    if k == 'normal':
+        r = _cand_normal(ex); return [r] if r else []
+    if k in ('hrmax', 'hrmin'):
+        r = _cands_minmax(ex, k); return [r] if r else []
+    if k in ('vIso', 'sIso'):
+        return [(t - 2.0, '') for t, _ in _cands_evento(ex, k)]
+    tipos = {'vPair': ['vPair'], 'sPair': ['sPair'], 'vt': ['vt'], 'vt_fast': ['vt'], 'vt_long': ['vt'],
+             'svt_fast': ['svt', 'sRun'], 'svt_long': ['svt', 'sRun'], 'avb23': AVB_23, 'vTrip': ['vt', 'aivr', 'ivr']}.get(k)
+    if not tipos:
+        return []
+    evs = [e for e in ex.eventos if e['type'] in tipos]
+    if k == 'vTrip':
+        evs = [e for e in evs if int(e.get('n') or 0) == 3]
+    def lpm(e):
+        return ' %d lpm' % round(e['rate']) if e.get('rate') else ''
+    if k.endswith('_fast') or k.endswith('_long'):
+        campo = 'rate' if k.endswith('_fast') else 'n'
+        evs = [e for e in evs if e.get(campo) is not None]
+        if not evs:
+            return []
+        e = max(evs, key=lambda e: (e[campo], e.get('dur') or 0))
+        nom = dict((a, b) for a, b, _ in PLANILLA)[k]
+        extra = lpm(e) if campo == 'rate' else ' %d latidos' % int(e['n']) + lpm(e)
+        return [(float(e['t0']) - 1.5, nom + extra)]
+    out = []
+    for e in evs:
+        lab = e.get('label') or ''
+        if k in ('vt', 'vTrip') and e.get('n'):
+            lab = ('Taquicardia ventricular' if k == 'vt' else 'Tripleta ventricular') + ' %d latidos' % int(e['n']) + lpm(e)
+        out.append((float(e['t0']) - 1.5, lab))
+    return out
+
+
 def generar_auto(ex, op):
     """Tiras automáticas según las opciones (episodios mín./máx., sucesos por examen / 24 h / hora, diario y periódicas)."""
     chans = [c for c in op.get('chans', [0, 1, 2]) if c < len(ex.chans)] or [0]
     tiras = []
+    pl = dict(POR_DEFECTO['planilla']); pl.update(op.get('planilla') or {})
+    noms = {k: n for k, n, _ in PLANILLA}
+    for k, _, modo in PLANILLA:
+        on, cant, por = pl.get(k, [False, 1, 'examen'])
+        if not on:
+            continue
+        grupo = {'examen': lambda t: 0, '24h': lambda t: int(t // 86400), 'hora': lambda t: int(t // 3600)}.get(por, lambda t: 0)
+        cuenta = {}
+        for t, lab in sorted(_cands_planilla(ex, k)):
+            g = grupo(t)
+            lim = 1 if modo == 'uno' else (10 ** 6 if cant == 'todos' else int(cant))
+            if cuenta.get(g, 0) >= lim:
+                continue
+            cuenta[g] = cuenta.get(g, 0) + 1
+            tiras.append(nueva_tira(t, 7.5, lab or noms[k], chans, True, 'pl:' + k))
+            if len(tiras) > 600:
+                break
     for k, n in MINMAX:
         if op['minmax'].get(k):
             r = _cands_minmax(ex, k)
@@ -171,7 +278,13 @@ def generar_auto(ex, op):
                 tiras.append(nueva_tira(t, 7.5, 'Tira periódica', chans, True, 'periodica'))
             t += paso
     tiras.sort(key=lambda x: x['t0'])
-    return tiras
+    # la planilla y las listas antiguas pueden pedir el mismo episodio: se deja una sola tira (la primera pedida)
+    unicas = []
+    for x in sorted(tiras, key=lambda x: (not str(x['clave']).startswith(('pl:', 'mm:')), x['t0'])):
+        if not any(abs(u['t0'] - x['t0']) < 1.0 and u['chans'] == x['chans'] and not u.get('pagina') for u in unicas):
+            unicas.append(x)
+    unicas.sort(key=lambda x: x['t0'])
+    return unicas
 
 
 # --------------------------------------------------------------------------- diálogos
@@ -236,6 +349,27 @@ class DialogoTirasAuto(QDialog):
             per.addWidget(w)
         per.addStretch(1); lay.addLayout(per)
         tabs = QTabWidget(); lay.addWidget(tabs, 1)
+        w = QWidget(); g = QGridLayout(w); self.pl = {}
+        pl = dict(POR_DEFECTO['planilla']); pl.update(op.get('planilla') or {})
+        for i, (k, n, modo) in enumerate(PLANILLA):
+            on, cant, por = pl.get(k, [True, 1, 'examen'])
+            cb = QCheckBox(n); cb.setChecked(on); g.addWidget(cb, i, 0)
+            cc = QComboBox(); pp = QComboBox()
+            if modo == 'varios':
+                cc.addItem('Imprimir todo', 'todos')
+                for v in (1, 2, 3, 5, 10, 20, 50, 100):
+                    cc.addItem(str(v), v)
+                cc.setCurrentIndex(max(0, cc.findData(cant)))
+                [pp.addItem(a, b) for a, b in (('por examen', 'examen'), ('cada 24 horas', '24h'), ('cada hora', 'hora'))]
+                pp.setCurrentIndex(max(0, pp.findData(por)))
+                g.addWidget(cc, i, 1); g.addWidget(pp, i, 2)
+            else:
+                cc.addItem('1', 1); pp.addItem('por examen', 'examen')
+                g.addWidget(QLabel('una tira representativa, de día' if k == 'normal' else 'el episodio más extremo'), i, 1, 1, 2)
+            self.pl[k] = (cb, cc, pp)
+        nota = QLabel('Si otra lista pide el mismo episodio, sale una sola tira. El bloqueo AV de 2.º y 3.er grado viene de holterai.')
+        nota.setWordWrap(True); g.addWidget(nota, len(PLANILLA), 0, 1, 4)
+        g.setRowStretch(30, 1); g.setColumnStretch(3, 1); tabs.addTab(w, 'Planilla del informe')
         w = QWidget(); g = QGridLayout(w); self.mm = {}
         for i, (k, n) in enumerate(MINMAX):
             cb = QCheckBox(n); cb.setChecked(op['minmax'].get(k, True)); self.mm[k] = cb; g.addWidget(cb, i // 2, i % 2)
@@ -260,6 +394,7 @@ class DialogoTirasAuto(QDialog):
     def opciones(self):
         return {'chans': [i for i, c in enumerate(self.ch) if c.isChecked()] or [0], 'skip_fail': self.skip.isChecked(), 'diario': self.diario.isChecked(),
                 'periodicas': self.per.isChecked(), 'offset': self.off.text().strip() or '00:00:00', 'intervalo': self.iv.text().strip() or '01:00:00',
+                'planilla': {k: [cb.isChecked(), cc.currentData(), pp.currentData()] for k, (cb, cc, pp) in self.pl.items()},
                 'minmax': {k: c.isChecked() for k, c in self.mm.items()},
                 'eventos': {k: [cb.isChecked(), cc.currentData(), pp.currentData()] for k, (cb, cc, pp) in self.ev.items()}}
 
