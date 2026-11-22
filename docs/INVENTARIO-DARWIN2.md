@@ -22,7 +22,7 @@ Todo lo nuevo usa los canales que tenga el examen (los 3 en el Holter del hospit
 | TSV más rápida y más larga | Nuevo 0.6.0 | Rachas supraventriculares. Se descartan las de más de 300 lpm, que casi siempre son latidos mal detectados |
 | Bloqueo AV de 2.º y 3.er grado | Nuevo 0.6.0 | Mobitz I, Mobitz II, 2:1, avanzado y completo de holterai. No incluye el de 1.er grado |
 
-Está en Tiras → Agregar automáticas → pestaña **Planilla del informe**. Todas vienen marcadas. Si otra lista pide el mismo episodio, sale una sola tira.
+Está en Tiras → Agregar automáticas → pestaña **Planilla del informe**. Cada apartado trae 10 candidatas por defecto (de 1 a 30, o todas), ordenadas de la más extrema a la menos (o repartidas en el registro para V y S aisladas). Se imprime la primera; en la pestaña Tiras, el filtro **Apartado** muestra las candidatas y **Elegir esta del apartado** cambia la que se imprime. Si se elige otra FC máxima o mínima, el resumen toma ese valor. La elección se recuerda aunque las tiras se regeneren. Las listas antiguas no repiten lo que la planilla ya pide.
 
 ## Pestañas nuevas
 
