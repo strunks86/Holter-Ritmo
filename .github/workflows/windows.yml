@@ -45,6 +45,11 @@ jobs:
             Invoke-WebRequest "https://physionet-open.s3.amazonaws.com/ltafdb/1.0.0/00.$e" -OutFile "holterlocal/ejemplo/00.$e"
           }
 
+      - name: Pruebas de la lista de exámenes (exámenes inventados)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python pruebas/lista_examenes.py autoprueba/lista
+
       - name: Pruebas del motor
         run: |
           holterlocal\node\node.exe pruebas\motor.js holterlocal\ejemplo\00.hea

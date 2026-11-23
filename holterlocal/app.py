@@ -3,6 +3,7 @@ import argparse
 import csv
 import json
 import os
+import shutil
 import sys
 import time
 from xml.sax.saxutils import escape
@@ -17,6 +18,7 @@ from . import __version__
 from .dialogos import (DialogoAjustes, DialogoArtefactos, DialogoBuscar, DialogoDiario, DialogoEtiquetas, DialogoFinalizar,
                        DialogoInforme, DialogoIrHora, DialogoPaciente, DialogoReescanear, DialogoST, DialogoTiempos, presets)
 from .estilo import QSS
+from .lista_examenes import DialogoListaExamenes, archivos_examen, paciente_desde_lista, slots
 from .motor import CLS_NAME, CLS_SYM, ORDEN_ETIQUETAS, Examen, Motor, recurso
 from .perfil import VistaPerfil
 from .prospectiva import VistaProspectiva, VistaSuperposicion
@@ -37,7 +39,8 @@ from .darwin_ajustes import (FLUJO_DEF, NOTA_PRESET, PRESET_DARWIN, DialogoAtajo
 def es_hscribe(p):
     d = p if os.path.isdir(p) else os.path.dirname(p)
     if not os.path.isfile(os.path.join(d, 'Samples.dat')):
-        return False
+        # repositorio de HScribe: Exam_N con la señal y el análisis repartidos en subcarpetas slot_N
+        return os.path.isdir(p) and 'samples.dat' in archivos_examen(p)
     return os.path.isdir(p) or not (p.lower().endswith('.hea') or os.path.isfile(os.path.splitext(p)[0] + '.hea'))
 
 
@@ -143,11 +146,14 @@ class Principal(QMainWindow):
     def _menus(self):
         mb = self.menuBar(); P = self.panel; T = P.tira
         m = mb.addMenu('E&xamen')
+        self._acc(m, 'Lista de exámenes de la carpeta…', self.lista, 'Ctrl+L')
+        self._acc(m, 'Elegir la carpeta de los Holter…', self.elegir_carpeta_holter)
+        m.addSeparator()
         self._acc(m, 'Abrir examen…', self.abrir, QKeySequence.Open)
         self._acc(m, 'Abrir carpeta de examen HScribe…', self.abrir_hscribe)
         self._acc(m, 'Abrir horas crudas de Mortara (H12+)…', self.abrir_horas)
         self._acc(m, 'Abrir el Holter de ejemplo (21 h, PhysioNet)', self.abrir_ejemplo)
-        self._acc(m, 'Buscar examen…', self.buscar, 'Ctrl+F')
+        self._acc(m, 'Buscar entre los exámenes ya abiertos…', self.buscar, 'Ctrl+F')
         m.addSeparator()
         self._acc(m, 'Información del paciente…', self.paciente)
         self._acc(m, 'Volver a escanear…', self.reescanear)
@@ -407,15 +413,30 @@ class Principal(QMainWindow):
         nombre = ''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in os.path.basename(os.path.normpath(d))) or 'examen'
         out = os.path.join(self.motor.tmp, 'hscribe_' + nombre); os.makedirs(out, exist_ok=True)
         base = os.path.join(out, nombre)
+        origen = d
+        if not os.path.isfile(os.path.join(d, 'Samples.dat')) and slots(d):
+            # HScribe guarda la señal y el análisis en slot_N distintos y su DLL solo abre el examen con todo junto:
+            # se copian a una carpeta temporal de este computador, que se borra al terminar de leer
+            junto = os.path.join(self.motor.tmp, 'junto_' + nombre)
+            try:
+                shutil.rmtree(junto, ignore_errors=True); os.makedirs(junto)
+                for p in archivos_examen(d).values():
+                    shutil.copy2(p, os.path.join(junto, os.path.basename(p)))
+            except OSError as e:
+                QMessageBox.critical(self, 'HolterLocal', 'No se pudo copiar el examen para leerlo:\n\n' + str(e)); return
+            origen = junto
+        self._hs_junto = origen if origen != d else None
         self.dlg = QProgressDialog('Leyendo la señal de HScribe (puede tardar unos minutos)…', None, 0, 0, self)
         self.dlg.setWindowTitle('Importando'); self.dlg.setWindowModality(Qt.WindowModal); self.dlg.setMinimumDuration(0); self.dlg.show()
         self.hs_proc = QProcess(self); self.hs_proc.setWorkingDirectory(dll)
         self.hs_proc.setProcessChannelMode(QProcess.MergedChannels)
         self.hs_proc.finished.connect(lambda *a: self._hscribe_fin(base, d))
-        self.hs_proc.start(exe, [d, base, '0', dll, '0'])
+        self.hs_proc.start(exe, [origen, base, '0', dll, '0'])
 
     def _hscribe_fin(self, base, d):
         txt = bytes(self.hs_proc.readAll()).decode('utf-8', 'replace'); rc = self.hs_proc.exitCode(); self.hs_proc = None
+        if getattr(self, '_hs_junto', None):
+            shutil.rmtree(self._hs_junto, ignore_errors=True); self._hs_junto = None
         if self.dlg:
             self.dlg.close(); self.dlg = None
         hea = base + '.hea'
@@ -434,6 +455,27 @@ class Principal(QMainWindow):
         if not os.path.isfile(p):
             QMessageBox.information(self, 'HolterLocal', 'Esta copia no trae el Holter de ejemplo.'); return
         self.cargar([p])
+
+    def elegir_carpeta_holter(self):
+        d = QFileDialog.getExistingDirectory(self, 'Elige la carpeta donde están los Holter',
+                                             self.cfg.value('carpeta_holter', '') or os.path.expanduser('~'))
+        if d:
+            self.cfg.setValue('carpeta_holter', d); self.lista()
+
+    def lista(self):
+        d = DialogoListaExamenes(self, self.cfg)
+        if not d.exec() or not d.elegido:
+            return
+        it = d.elegido; ruta = it['ruta']
+        self._accion_tras_abrir = d.accion
+        self._paciente_lista = paciente_desde_lista(it)
+        if es_hscribe(ruta):
+            self.importar_hscribe(ruta); return
+        heas = sorted(f for f in os.listdir(ruta) if f.lower().endswith('.hea'))
+        if heas:
+            self.cargar([os.path.join(ruta, heas[0])], clave=ruta, origen={'tipo': 'archivos', 'rutas': [ruta]}); return
+        self._paciente_lista = None
+        QMessageBox.warning(self, 'Lista de exámenes', 'En esa carpeta no está la señal del examen (Samples.dat).')
 
     def buscar(self):
         d = DialogoBuscar(self)
@@ -495,6 +537,12 @@ class Principal(QMainWindow):
         if self.dlg:
             self.dlg.close(); self.dlg = None
         self.ses = Sesion(self.clave, ex.nombre); self.ses.d['origen'] = self.origen
+        pl = getattr(self, '_paciente_lista', None); self._paciente_lista = None
+        if pl:
+            p = self.ses.d.setdefault('paciente', {})
+            for k, v in pl.items():
+                if not p.get(k):
+                    p[k] = v
         ex.sesion = self.ses; ex.sumar_sesion(); self.ex = ex
         self._etiquetar_motor()
         self.setWindowTitle(f'HolterLocal — {ex.nombre}')
@@ -1321,6 +1369,9 @@ def main(argv=None):
         autoprueba(win, a.autoprueba, rutas)
     elif a.examen:
         QTimer.singleShot(300, lambda: win.cargar(a.examen))
+    elif win.cfg.value('carpeta_holter', ''):
+        # como HScribe: al abrir el programa aparece la lista de exámenes de la carpeta guardada
+        QTimer.singleShot(300, win.lista)
     codigo = app.exec()
     try:
         if win.ha_proc is not None:
