@@ -31,7 +31,7 @@ class Export
     const int REC = 18;   // bytes por muestra
     const int STEP_MS = 10000;
     const int ZERO_BLOCKS = 6;      // 60 s en cero = fin del registro
-    const long MAX_MS = 72L * 3600 * 1000;   // tope de seguridad
+    const long MAX_MS = 14L * 24 * 3600 * 1000;   // tope de seguridad: 14 días (cabe en int de ms)
 
     static void Main(string[] args)
     {
@@ -89,7 +89,12 @@ class Export
         string name = Path.GetFileName(outBase);
         int totalSamples = 0;
         int zeroBlocks = 0;
-        List<short> buffer = new List<short>(1 << 20);
+        // La señal se escribe directo al .dat (un examen de 89 h son 172 millones de valores: en memoria no cabe en
+        // un proceso de 32 bits). Las muestras en cero quedan pendientes y solo se escriben si después viene señal,
+        // así se recortan los ceros del final sin volver atrás en el archivo.
+        long pendingZeros = 0;
+        var fs = new FileStream(datPath, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 20);
+        var bw = new BinaryWriter(fs);
 
         IntPtr list = Marshal.AllocHGlobal(512);
         for (long t = startMs; t < endLimit; t += STEP_MS)
@@ -127,12 +132,16 @@ class Export
                         short s0 = BitConverter.ToInt16(raw, o);
                         short s1 = BitConverter.ToInt16(raw, o + 2);
                         short s2 = BitConverter.ToInt16(raw, o + 4);
-                        if (s0 != 0 || s1 != 0 || s2 != 0) allZero = false;
-                        buffer.Add(s0);
-                        buffer.Add(s1);
-                        buffer.Add(s2);
+                        if (s0 != 0 || s1 != 0 || s2 != 0)
+                        {
+                            allZero = false;
+                            totalSamples += (int)pendingZeros;
+                            for (; pendingZeros > 0; pendingZeros--) { bw.Write((short)0); bw.Write((short)0); bw.Write((short)0); }
+                            bw.Write(s0); bw.Write(s1); bw.Write(s2);
+                            totalSamples++;
+                        }
+                        else pendingZeros++;
                     }
-                    totalSamples += take;
                     zeroBlocks = allZero ? zeroBlocks + 1 : 0;
                 }
                 else zeroBlocks++;
@@ -142,19 +151,8 @@ class Export
         }
         Console.WriteLine();
 
-        // Recortar muestras finales en cero (una muestra = 3 short).
-        while (buffer.Count >= 3 && buffer[buffer.Count - 1] == 0
-               && buffer[buffer.Count - 2] == 0 && buffer[buffer.Count - 3] == 0)
-        {
-            buffer.RemoveRange(buffer.Count - 3, 3);
-            totalSamples--;
-        }
-
-        using (var fs = new FileStream(datPath, FileMode.Create, FileAccess.Write))
-        using (var bw = new BinaryWriter(fs))
-        {
-            foreach (short s in buffer) bw.Write(s);
-        }
+        // Los ceros pendientes del final no se escriben (se recortan).
+        bw.Flush(); bw.Close();
         using (var sw = new StreamWriter(heaPath))
         {
             sw.WriteLine(name + " 3 " + SPS + " " + totalSamples);
