@@ -1,0 +1,586 @@
+# Registro de funciones de HolterIA: estado y evidencia (tarea T09).
+#
+# Origen: tabla de RESPUESTAS-SECCION19.md seccion 10 (no versionada en este
+# repositorio). Cada funcion declara en que estado esta, donde se ve en la
+# interfaz y que evidencia la respalda.
+#
+# Estados
+#   visible       implementada, con prueba automatica y sin inferencia clinica
+#                 pendiente de validar. Es el unico estado que puede aparecer
+#                 en el informe (report: true).
+#   experimental  implementada pero NO validada. La interfaz la muestra con la
+#                 franja "exploratorio, no validado". Nunca aparece en el
+#                 informe mientras este en este estado.
+#   hidden        no disponible para el usuario: no implementada, sin modelo
+#                 validado o deshabilitada. La interfaz la oculta (ui.*) y el
+#                 motivo queda en `reason`.
+#
+# Campos
+#   id              identificador estable, unico, de la forma area.funcion
+#   name            nombre legible
+#   area            import | view | analysis | rhythm | measure | quality |
+#                   model | report | export | manage | interop
+#   status          visible | experimental | hidden
+#   reason          por que no es visible (obligatorio si no es visible)
+#   report          true si el informe puede mostrarla cuando este visible
+#   report_markers  frases que solo deben aparecer en el informe si esta visible
+#   ui.tabs         valores de data-tab que la representan
+#   ui.panes        ids de paneles (.pane) que la representan
+#   ui.ids          otros ids del HTML que la representan
+#   ui.selectors    selectores CSS adicionales (controles sin id)
+#   evidence        rutas del repositorio que la respaldan (pruebas, docs, codigo)
+version: 1
+updated: "2026-11-13"
+source: "RESPUESTAS-SECCION19.md seccion 10 + docs/producto/matriz_funciones.md"
+
+statuses:
+  visible: "Implementada y probada; el informe puede mostrarla."
+  experimental: "Implementada pero no validada; se muestra con franja de aviso."
+  hidden: "No disponible; la interfaz la oculta."
+
+rules:
+  - "El informe solo muestra funciones en estado visible."
+  - "El estado experimental nunca se informa mientras no se valide."
+  - "Pasar una funcion a visible exige evidencia nueva en este archivo."
+
+features:
+  # ---------------------------------------------------------------- importar
+  - id: import.hscribe
+    name: Importar carpeta HScribe nativa
+    area: import
+    status: visible
+    report: true
+    ui: {ids: [pathInput, btnLoad]}
+    evidence:
+      - tests/unit/test_ingest_hscribe.py
+      - tests/unit/test_ingest.py
+      - docs/formatos/hscribe_beats.md
+
+  - id: import.wfdb
+    name: Importar WFDB (.hea/.dat)
+    area: import
+    status: visible
+    report: true
+    ui: {ids: [pathInput, btnLoad]}
+    evidence:
+      - tests/unit/test_loader.py
+      - src/holterai/legacy/app/ingest/wfdb.py
+
+  - id: import.edf_csv
+    name: Importar EDF/EDF+ y CSV/TXT
+    area: import
+    status: visible
+    report: true
+    ui: {ids: [pathInput, btnLoad]}
+    evidence:
+      - tests/unit/test_edf_export.py
+      - src/holterai/legacy/app/ingest/csv_import.py
+
+  - id: import.demo
+    name: Registro de ejemplo sintetico
+    area: import
+    status: visible
+    report: false
+    ui: {ids: [btnDemo]}
+    evidence:
+      - tests/unit/test_synthetic.py
+      - src/holterai/legacy/app/tools/demo.py
+
+  # ------------------------------------------------------------------ visor
+  - id: view.multilead
+    name: Visor de ECG multicanal con derivacion y ganancia
+    area: view
+    status: visible
+    report: false
+    ui: {tabs: [study], panes: [pane-study], ids: [wave, optLead, optGain]}
+    evidence:
+      - src/holterai/legacy/app/signal/multilead.py
+      - tests/unit/test_qt_measure.py
+
+  - id: view.full_disclosure
+    name: Full disclosure de 30 s por pagina
+    area: view
+    status: visible
+    report: false
+    ui: {panes: [pane-full], ids: [btnFull30]}
+    evidence:
+      - src/holterai/legacy/app/static/app.js
+      - src/holterai/legacy/app/static/index.html
+
+  - id: view.ecg_20min
+    name: Pagina comprimida de 20 minutos
+    area: view
+    status: visible
+    report: false
+    ui: {tabs: [ecg], panes: [pane-ecg]}
+    evidence:
+      - src/holterai/legacy/app/static/app.js
+
+  - id: view.strips
+    name: Tiras y anotaciones del revisor
+    area: view
+    status: visible
+    report: true
+    ui: {tabs: [strips], panes: [pane-strips]}
+    evidence:
+      - tests/unit/test_edits.py
+      - src/holterai/legacy/app/static/app.js
+
+  - id: view.caliper
+    name: Calibres (delta de tiempo y de voltaje)
+    area: view
+    status: visible
+    report: false
+    ui: {ids: [btnToolCaliper]}
+    evidence:
+      - src/holterai/legacy/app/static/app.js
+
+  - id: view.filters
+    name: Filtros de linea base y ruido
+    area: view
+    status: visible
+    report: false
+    ui: {panes: [pane-study]}
+    evidence:
+      - src/holterai/legacy/app/signal/filters.py
+
+  - id: view.templates
+    name: Morfologias agrupadas y reasignacion de clase
+    area: view
+    status: experimental
+    reason: "Agrupa por forma, pero reasigna clases con el clasificador no validado."
+    report: false
+    ui: {tabs: [templates], panes: [pane-templates]}
+    evidence:
+      - src/holterai/legacy/app/signal/rhythm.py
+      - docs/producto/matriz_funciones.md
+
+  - id: view.trends
+    name: Tendencias (series por hora y por minuto)
+    area: view
+    status: experimental
+    reason: "Las series de ectopia y ritmo salen del clasificador no validado; sin validacion de tendencias."
+    report: false
+    ui: {tabs: [trends], panes: [pane-trends], ids: [trendCanvas, trendWave, trendOverview]}
+    evidence:
+      - src/holterai/legacy/app/static/app.js
+      - docs/producto/matriz_funciones.md
+
+  - id: view.histograms
+    name: Histogramas RR y de prematuridad
+    area: view
+    status: experimental
+    reason: "Histograma de prematuridad apoyado en la clasificacion no validada."
+    report: false
+    ui: {tabs: [hist], panes: [pane-hist], ids: [rrHist, premHist, histWave, histOverview]}
+    evidence:
+      - src/holterai/legacy/app/static/app.js
+      - docs/producto/matriz_funciones.md
+
+  - id: view.prospective
+    name: Modo prospectivo (nuevo latido frente a plantillas)
+    area: view
+    status: experimental
+    reason: "Compara contra plantillas creadas por el clasificador no validado."
+    report: false
+    ui: {tabs: [pros], panes: [pane-pros], ids: [prosCanvasA, prosCanvasB, prosAll, prosNone]}
+    evidence:
+      - src/holterai/legacy/app/static/app.js
+      - docs/producto/matriz_funciones.md
+
+  - id: view.superposition
+    name: Superposicion de morfologias
+    area: view
+    status: experimental
+    reason: "Superpone morfologias agrupadas automaticamente; depende del agrupamiento."
+    report: false
+    ui: {tabs: [superposicion], panes: [pane-superposicion], ids: [superCanvasA, superCanvasB, superPlay]}
+    evidence:
+      - src/holterai/legacy/app/static/app.js
+      - docs/producto/matriz_funciones.md
+
+  - id: view.summary
+    name: Resumen del estudio con contadores y notas del revisor
+    area: view
+    status: visible
+    report: false
+    ui: {tabs: [summary], panes: [pane-summary], ids: [summaryAnalyst, summaryDiagnosis]}
+    evidence:
+      - src/holterai/legacy/app/static/index.html
+      - tests/unit/test_store.py
+
+  - id: view.events
+    name: Tabla de eventos con filtros y exportacion
+    area: view
+    status: visible
+    report: false
+    ui: {tabs: [events], panes: [pane-events], ids: [eventsTable, filterKind, btnEventsCsv]}
+    evidence:
+      - src/holterai/legacy/app/static/app.js
+      - src/holterai/legacy/app/server.py
+
+  # --------------------------------------------------------------- analisis
+  - id: analysis.qrs_detect
+    name: Deteccion de QRS
+    area: analysis
+    status: visible
+    report: true
+    report_markers: ["Latidos analizados"]
+    ui: {panes: [pane-study]}
+    evidence:
+      - src/holterai/legacy/app/signal/qrs.py
+      - tests/unit/test_ec57.py
+      - docs/producto/matriz_funciones.md
+
+  - id: analysis.heart_rate
+    name: Frecuencia cardiaca (media, minima y maxima)
+    area: analysis
+    status: visible
+    report: true
+    report_markers: ["FC media"]
+    ui: {ids: [summaryRate, hourlyTable]}
+    evidence:
+      - src/holterai/legacy/app/signal/rhythm.py
+      - tests/unit/test_rhythm_events.py
+
+  - id: analysis.hrv
+    name: HRV (SDNN, RMSSD, pNN50, SDANN, LF/HF)
+    area: analysis
+    status: visible
+    report: true
+    report_markers: ["Dominio temporal"]
+    ui: {ids: [summaryHrv]}
+    evidence:
+      - src/holterai/legacy/app/signal/hrv.py
+      - tests/unit/test_rhythm_events.py
+      - docs/producto/matriz_funciones.md
+
+  - id: analysis.hourly
+    name: Resumen por hora (latidos y FC)
+    area: analysis
+    status: visible
+    report: true
+    report_markers: ["Resumen por hora"]
+    ui: {tabs: [profile], panes: [pane-profile],
+         ids: [hourlyTable, profileTable, profileWave]}
+    evidence:
+      - src/holterai/legacy/app/signal/rhythm.py
+
+  # ----------------------------------------------------- clasificacion (CNN)
+  - id: beat.classification
+    name: Clasificacion de latidos N/S/V/F/Q
+    area: analysis
+    status: experimental
+    reason: "El modelo CNN sobreclasifica V; sin validacion EC57 en examenes reales."
+    report: true
+    report_markers: ["Distribución de latidos", "Latidos por clase"]
+    ui: {panes: [pane-templates], ids: [classBars, templateClass, summaryAll]}
+    evidence:
+      - src/holterai/legacy/app/ml/net.py
+      - models/pretrained/beat_cnn.npz
+      - docs/producto/matriz_funciones.md
+
+  - id: beat.ectopy_ventricular
+    name: Ectopia ventricular (PVC, parejas, Lown)
+    area: analysis
+    status: experimental
+    reason: "Hereda la clasificacion no validada; el conteo de PVC no es publicable."
+    report: true
+    report_markers: ["Carga de PVC", "Grado de Lown", "Ectopia ventricular", "PVC"]
+    ui: {ids: [summaryVE]}
+    evidence:
+      - tests/unit/test_rhythm_events.py
+      - src/holterai/legacy/app/signal/rhythm.py
+
+  - id: beat.ectopy_supraventricular
+    name: Ectopia supraventricular (PAC, SVT aislada)
+    area: analysis
+    status: experimental
+    reason: "El modelo PAC tiene PPV 0,39 en SVDB; no se publica."
+    report: true
+    report_markers: ["Carga de PAC", "Ectopia supraventricular", "PAC"]
+    ui: {ids: [summarySV]}
+    evidence:
+      - src/holterai/legacy/app/signal/pac.py
+      - models/pretrained/pac_model.npz
+      - docs/producto/matriz_funciones.md
+
+  # ------------------------------------------------------------------ ritmo
+  - id: rhythm.pause
+    name: Pausas por umbral configurable
+    area: rhythm
+    status: visible
+    report: true
+    report_markers: ["Pausa de"]
+    ui: {ids: [optPause, summaryRate], selectors: ['#critPause']}
+    evidence:
+      - tests/unit/test_rhythm_events.py
+      - src/holterai/legacy/app/signal/rhythm.py
+
+  - id: rhythm.brady_tachy
+    name: Episodios de bradicardia y taquicardia
+    area: rhythm
+    status: experimental
+    reason: "Regla de umbral sin validacion contra HScribe; duracion minima sin probar."
+    report: true
+    report_markers: ["Bradicardia", "Taquicardia"]
+    ui: {ids: [summaryRate], selectors: ['#critTachy', '#critBrady']}
+    evidence:
+      - src/holterai/legacy/app/signal/rhythm.py
+      - docs/producto/matriz_funciones.md
+
+  - id: rhythm.af
+    name: Fibrilacion auricular (modelo RR y carga)
+    area: rhythm
+    status: experimental
+    reason: "Modelo RR no validado en esta poblacion; carga de FA sin referencia."
+    report: true
+    report_markers: ["Fibrilación auricular", "Carga de FA", "FA (prob.)"]
+    ui: {ids: [summaryRhythm, optAf], selectors: ['#critAf']}
+    evidence:
+      - src/holterai/legacy/app/ml/rhythm_model.py
+      - models/pretrained/rhythm_af.npz
+      - docs/producto/matriz_funciones.md
+
+  - id: rhythm.vt_svt
+    name: Rachas ventriculares y taquicardia supraventricular
+    area: rhythm
+    status: experimental
+    reason: "Rachas derivadas de la clasificacion no validada; VT/TSV sin ground truth."
+    report: true
+    report_markers: ["Racha ventricular", "Taquicardia supraventricular"]
+    ui: {ids: [summaryRhythm, ecgFilterVT], selectors: ['#critVt', '#critSvt']}
+    evidence:
+      - tests/unit/test_rhythm_events.py
+      - src/holterai/legacy/app/pipeline.py
+
+  - id: rhythm.pacing
+    name: Marcapasos y espigas
+    area: rhythm
+    status: experimental
+    reason: "Deteccion de espigas a 180 Hz limitada; sin validacion de captura."
+    report: true
+    report_markers: ["Marcapasos: ", "% de latidos estimulados"]
+    ui: {ids: [optPacing, optCrt], selectors: ['#critPace', '#critPaceOn']}
+    evidence:
+      - src/holterai/legacy/app/signal/pacing.py
+      - src/holterai/legacy/app/signal/features.py
+
+  - id: rhythm.criteria
+    name: Criterios de examen (umbrales de pausa, FC, FA, VT y marcapasos)
+    area: rhythm
+    status: experimental
+    reason: "Cambia umbrales de detectores aun no validados; los de ST siguen ocultos."
+    report: false
+    ui: {ids: [btnCriteria]}
+    evidence:
+      - src/holterai/legacy/app/static/app.js
+      - src/holterai/legacy/app/server.py
+
+  # --------------------------------------------------------------- mediciones
+  - id: measure.qt
+    name: Medida de QT/QTc
+    area: measure
+    status: experimental
+    reason: "qt_interval_ms existe y pasa una prueba sintetica; sin validacion clinica."
+    report: false
+    ui: {selectors: ['input[name="trendFilter"][value="qt"]',
+                     'input[name="trendFilter"][value="qtrr"]']}
+    evidence:
+      - tests/unit/test_qt_measure.py
+      - src/holterai/legacy/app/signal/features.py
+
+  - id: measure.qrs_width
+    name: Anchura de QRS
+    area: measure
+    status: experimental
+    reason: "Medicion geometrica disponible, sin validacion contra referencias."
+    report: false
+    ui: {}
+    evidence:
+      - src/holterai/legacy/app/signal/features.py
+
+  - id: measure.st
+    name: Medida de ST (depresion y elevacion)
+    area: measure
+    status: hidden
+    reason: "Sin modelo validado; el perfil muestra un guion hasta validarlo."
+    report: false
+    ui:
+      selectors: ['input[name="trendFilter"][value="st"]',
+                  'input[name="trendFilter"][value="stfc"]']
+      ids: [critStDep, critStEle]
+    evidence:
+      - tests/unit/test_st_measure.py
+      - docs/producto/matriz_funciones.md
+
+  # ----------------------------------------------------------------- calidad
+  - id: quality.map
+    name: Mapa de calidad de senal (SQI) y artefacto
+    area: quality
+    status: experimental
+    reason: "Umbrales de ruido heurísticos; no validados contra revision manual."
+    report: false
+    ui: {ids: [quality, qualityMap]}
+    evidence:
+      - src/holterai/legacy/app/server.py
+
+  # ------------------------------------------------------------------ modelo
+  - id: model.ecgfounder
+    name: ECGFounder (12 derivaciones, orientativo)
+    area: model
+    status: hidden
+    reason: "Sin pesos instalados en models/pretrained y sin validar en 3 canales."
+    report: false
+    ui: {ids: [optEcgFounder]}
+    evidence:
+      - src/holterai/legacy/app/ml/ecgfounder.py
+      - models/CHECKSUMS.txt
+
+  - id: view.stimulated_filter
+    name: Filtro de morfologia "Estimulado"
+    area: view
+    status: hidden
+    reason: "Deshabilitado en la interfaz hasta tener modelo de marcapasos validado."
+    report: false
+    ui: {selectors: ['input[name="morphFilter"][value="P"]']}
+    evidence:
+      - src/holterai/legacy/app/static/index.html
+
+  # ----------------------------------------------------------------- informe
+  - id: report.generate
+    name: Generacion de informe DOCX/PDF/HTML
+    area: report
+    status: visible
+    report: true
+    report_markers: ["Informe de análisis Holter"]
+    ui: {panes: [pane-report], ids: [btnGenerateReport]}
+    evidence:
+      - tests/unit/test_features.py
+      - tests/unit/test_report_basic.py
+      - src/holterai/legacy/app/report/report.py
+
+  - id: report.narrative
+    name: Conclusiones, notas, diario y eventos marcados a mano
+    area: report
+    status: visible
+    report: true
+    report_markers: ["Conclusiones y comentarios", "Diario del paciente"]
+    ui: {ids: [summaryConclusions, summaryDiary, notesBox, btnMarkEvent]}
+    evidence:
+      - tests/unit/test_edits.py
+      - src/holterai/legacy/app/report/report.py
+
+  - id: report.templates
+    name: Secciones y cabecera configurables del informe
+    area: report
+    status: experimental
+    reason: "Secciones fijas; falta editor de plantillas y firma validada."
+    report: false
+    ui: {panes: [pane-report], ids: [reportSections, btnReportConfig]}
+    evidence:
+      - tests/unit/test_report_config.py
+      - src/holterai/report_config.py
+
+  # ------------------------------------------------------------- exportacion
+  - id: export.csv_json
+    name: Exportar latidos y resumen a CSV/JSON
+    area: export
+    status: visible
+    report: false
+    ui: {ids: [btnExportCsv]}
+    evidence:
+      - tests/unit/test_export.py
+      - src/holterai/export.py
+
+  - id: export.wfdb_annotations
+    name: Exportar anotaciones WFDB (.atr)
+    area: export
+    status: visible
+    report: false
+    ui: {ids: [btnExportAnn]}
+    evidence:
+      - tests/unit/test_ec57.py
+      - src/holterai/legacy/app/ingest/wfdb.py
+
+  - id: export.edf
+    name: Exportar EDF+
+    area: export
+    status: visible
+    report: false
+    ui: {}
+    evidence:
+      - tests/unit/test_edf_export.py
+      - src/holterai/edf_export.py
+
+  # --------------------------------------------------------------- gestion
+  - id: manage.worklist
+    name: Worklist de estudios
+    area: manage
+    status: visible
+    report: false
+    ui: {ids: [worklist, btnWorklistRefresh, worklistSearch]}
+    evidence:
+      - tests/unit/test_store.py
+      - src/holterai/store.py
+
+  - id: manage.patient
+    name: Ficha de paciente
+    area: manage
+    status: visible
+    report: true
+    report_markers: ["Identificador"]
+    ui: {ids: [patName, patCode, btnPatientSave]}
+    evidence:
+      - tests/unit/test_store.py
+      - src/holterai/store.py
+
+  - id: manage.edit_beats
+    name: Editar, insertar, borrar latidos y deshacer
+    area: manage
+    status: visible
+    report: false
+    ui: {ids: [btnUndo, btnToolBeat]}
+    evidence:
+      - tests/unit/test_edits.py
+      - src/holterai/edits.py
+
+  - id: manage.audit
+    name: Auditoria de cambios y correcciones persistentes
+    area: manage
+    status: visible
+    report: false
+    ui: {ids: [btnAudit]}
+    evidence:
+      - tests/unit/test_store.py
+      - tests/unit/test_edits.py
+
+  - id: manage.prior_exams
+    name: Comparacion con estudios previos del paciente
+    area: manage
+    status: visible
+    report: false
+    ui: {ids: [btnPrior]}
+    evidence:
+      - tests/unit/test_store.py
+      - src/holterai/legacy/app/server.py
+
+  - id: manage.multiuser
+    name: Multiusuario y roles
+    area: manage
+    status: hidden
+    reason: "No implementado; la aplicacion es monousuario local."
+    report: false
+    ui: {}
+    evidence:
+      - docs/producto/matriz_funciones.md
+
+  - id: interop.dicom_hl7
+    name: DICOM / HL7 / GDT
+    area: interop
+    status: hidden
+    reason: "No implementado."
+    report: false
+    ui: {}
+    evidence:
+      - docs/producto/matriz_funciones.md

@@ -1,0 +1,5 @@
+Copia del motor holterai de Jorge (repositorio local respaldado el 14-nov-2026, holterai_full.bundle).
+Base: rama claude/T173, commit a96dd75 (T173: ECGFounder T158 como Options.ecgf_model='t158').
+Cambios para el escritorio: commit 2eb9bfb en la rama claude/escritorio del bundle
+(HOLTERIA_ROOT en core/config.py y una sola conversión de la señal en la capa de marcapasos).
+Los pesos de T158 (t158_full_s0.pt, 123 MB) no van en git.

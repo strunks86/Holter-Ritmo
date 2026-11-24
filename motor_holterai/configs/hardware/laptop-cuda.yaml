@@ -1,0 +1,4 @@
+device: cuda
+batch_size: 64
+precision: float16
+num_workers: 4

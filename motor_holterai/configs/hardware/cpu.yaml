@@ -1,0 +1,4 @@
+device: cpu
+batch_size: 32
+precision: float32
+num_workers: 0

@@ -1,0 +1,22 @@
+# Umbrales de los patrones ventriculares (T121, sección C de CRITERIOS-TRATADOS).
+# Solo reglas y umbrales: no hay modelos entrenados. Lo lee
+# holterai.legacy.app.signal.rhythm.VentricularCriteria.load().
+ventricular:
+  # Salva / TVNS / TV: ≥3 V seguidos. Pareja = exactamente 2 V.
+  run_min_beats: 3
+  # TVNS y TV sostenida: frecuencia >100 lpm.
+  tvns_min_bpm: 100.0
+  # ≥30 s = TV sostenida; <30 s = TVNS (salva).
+  sustained_s: 30.0
+  # RIVA: 50–110 lpm. La regla de TVNS (>100 lpm) se aplica antes, así que
+  # en la práctica RIVA cubre 50–100 lpm (ver rhythm.py).
+  riva_min_bpm: 50.0
+  riva_max_bpm: 110.0
+  # Bigeminismo (N-V) y trigeminismo (N-N-V): ≥3 ciclos seguidos.
+  cycles_min: 3
+  # Interpolada, pausa compensadora y fusión: ±10 % del RR basal.
+  basal_tol: 0.10
+  # Latidos normales a cada lado para calcular el RR basal.
+  basal_window: 15
+  # Acoplamiento ≥500 ms: factor de riesgo informado (no es un evento).
+  risk_coupling_ms: 500.0

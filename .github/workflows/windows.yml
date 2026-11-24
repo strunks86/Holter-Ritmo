@@ -1,0 +1,168 @@
+name: Windows (.exe)
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Rama o commit que se arma (vacío = esta rama)'
+        required: false
+        default: ''
+      publicar:
+        description: 'Publicar como versión de GitHub (vX.Y.Z), descargable sin iniciar sesión'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  exe:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      NODE_VERSION: '22.12.0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Dependencias de Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # PyInstaller con el cargador (bootloader) compilado aquí: el cargador precompilado que trae PyInstaller
+          # es el mismo en miles de programas, también en malware, y Defender suele marcarlo por aprendizaje automático
+          $env:PYINSTALLER_COMPILE_BOOTLOADER = '1'
+          pip install --no-binary pyinstaller pyinstaller==6.11.1
+        shell: pwsh
+
+      - name: Node portátil para el motor
+        shell: pwsh
+        run: |
+          $u = "https://nodejs.org/dist/v$env:NODE_VERSION/node-v$env:NODE_VERSION-win-x64.zip"
+          Invoke-WebRequest $u -OutFile node.zip
+          Expand-Archive node.zip -DestinationPath nodetmp
+          New-Item -ItemType Directory -Force holterlocal/node | Out-Null
+          Copy-Item "nodetmp/node-v$env:NODE_VERSION-win-x64/node.exe" holterlocal/node/
+          Copy-Item "nodetmp/node-v$env:NODE_VERSION-win-x64/LICENSE" holterlocal/node/LICENSE-node.txt
+
+      - name: Holter de ejemplo (PhysioNet LTAFDB 00, licencia ODC-By)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force holterlocal/ejemplo | Out-Null
+          foreach ($e in 'hea','dat','atr') {
+            Invoke-WebRequest "https://physionet-open.s3.amazonaws.com/ltafdb/1.0.0/00.$e" -OutFile "holterlocal/ejemplo/00.$e"
+          }
+
+      - name: Pruebas de la lista de exámenes (exámenes inventados)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python pruebas/lista_examenes.py autoprueba/lista
+
+      - name: Pruebas del motor
+        run: |
+          holterlocal\node\node.exe pruebas\motor.js holterlocal\ejemplo\00.hea
+
+      - name: Compilar el exportador de HScribe (x86)
+        shell: pwsh
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe" /nologo /platform:x86 /optimize /out:holterlocal\hscribe\export180.exe holterlocal\hscribe\export180.cs
+          if ($LASTEXITCODE -ne 0) { throw 'no compiló export180' }
+
+      - name: Datos de versión del .exe (empresa, producto, descripción)
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path holterlocal\__init__.py -Pattern "'(.+)'").Matches[0].Groups[1].Value
+          $n = ($v.Split('.') + @('0','0','0','0'))[0..3] -join ', '
+          @"
+          VSVersionInfo(
+            ffi=FixedFileInfo(filevers=($n), prodvers=($n), mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+            kids=[StringFileInfo([StringTable('040A04B0', [
+              StringStruct('CompanyName', 'HolterLocal'),
+              StringStruct('FileDescription', 'HolterLocal: análisis de Holter de ritmo'),
+              StringStruct('FileVersion', '$v'),
+              StringStruct('InternalName', 'HolterLocal'),
+              StringStruct('OriginalFilename', 'HolterLocal.exe'),
+              StringStruct('ProductName', 'HolterLocal'),
+              StringStruct('ProductVersion', '$v')])]),
+              VarFileInfo([VarStruct('Translation', [0x040A, 1200])])])
+          "@ | Set-Content -Encoding utf8 empaquetado\version_info.txt
+          # se agrega al .spec si este aún no la declara (así también sirve al armar ramas más antiguas)
+          $spec = Get-Content -Raw empaquetado\HolterLocal.spec
+          if ($spec -notmatch 'version=') {
+            $spec = $spec -replace "name='HolterLocal', console=False,", "name='HolterLocal', console=False, upx=False, version=os.path.join(SPECPATH, 'version_info.txt'),"
+            Set-Content -Encoding utf8 empaquetado\HolterLocal.spec $spec
+          }
+          Select-String -Path empaquetado\HolterLocal.spec -Pattern 'version='
+
+      - name: Armar el .exe
+        run: pyinstaller --noconfirm --distpath dist --workpath build empaquetado/HolterLocal.spec
+
+      - name: Abrir el .exe y probarlo en Windows (los dos motores)
+        shell: pwsh
+        run: |
+          foreach ($m in 'estacion', 'holterai', 'mixto') {
+            $dir = "$PWD\autoprueba\$m"
+            $p = Start-Process -FilePath dist\HolterLocal\HolterLocal.exe -ArgumentList '--motor', $m, '--autoprueba', $dir -PassThru
+            $fin = (Get-Date).AddMinutes(45); $salida = $null
+            while ((Get-Date) -lt $fin) {
+              if ($p.HasExited) { break }
+              $l = $null
+              if (Test-Path "$dir\autoprueba.txt") { $l = Select-String -Path "$dir\autoprueba.txt" -Pattern '^salida (\d+)$' }
+              if ($l) { $salida = [int]$l.Matches[0].Groups[1].Value; Start-Sleep 10; break }
+              Start-Sleep 5
+            }
+            if (-not $p.HasExited) { Write-Host "::warning::El proceso ($m) seguía abierto 10 s después de terminar; se cierra a la fuerza"; $p.Kill() }
+            if (Test-Path "$dir\autoprueba.txt") { Get-Content "$dir\autoprueba.txt" }
+            if ($salida -eq $null) {
+              if (-not $p.HasExited -or (Get-Date) -ge $fin) { throw "La autoprueba ($m) no terminó en 45 minutos" }
+              $salida = $p.ExitCode
+            }
+            if ($salida -ne 0) { throw "La autoprueba ($m) falló (código $salida)" }
+            if (-not (Select-String -Path "$dir\autoprueba.txt" -Pattern '^OK$' -Quiet)) { throw "La autoprueba ($m) no llegó al final" }
+          }
+          if (-not (Select-String -Path autoprueba\holterai\autoprueba.txt -Pattern 'motor: holterai' -Quiet)) { throw 'holterai no reemplazó al análisis rápido' }
+          if (-not (Select-String -Path autoprueba\mixto\autoprueba.txt -Pattern 'motor: mixto' -Quiet)) { throw 'el modo mixto no se aplicó' }
+
+      - name: Instalador
+        id: instalador
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path holterlocal\__init__.py -Pattern "'(.+)'").Matches[0].Groups[1].Value
+          $env:HL_VERSION = $v
+          "version=$v" >> $env:GITHUB_OUTPUT
+          New-Item -ItemType Directory -Force salida | Out-Null
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc empaquetado\instalador.iss
+          Compress-Archive -Path dist\HolterLocal -DestinationPath "salida\HolterLocal-$v-portable.zip"
+          Get-ChildItem salida
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HolterLocal-Windows
+          path: salida/*
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: autoprueba
+          path: autoprueba/**
+          retention-days: 30
+
+      - name: Publicar versión
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publicar)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: salida/*
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', steps.instalador.outputs.version) }}
+          target_commitish: ${{ startsWith(github.ref, 'refs/tags/v') && github.sha || inputs.ref || github.sha }}
+          name: ${{ format('HolterLocal {0}', steps.instalador.outputs.version) }}
