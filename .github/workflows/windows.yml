@@ -36,7 +36,12 @@ jobs:
       - name: Dependencias de Python
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller==6.11.1
+          pip install -r requirements.txt
+          # PyInstaller con el cargador (bootloader) compilado aquí: el cargador precompilado que trae PyInstaller
+          # es el mismo en miles de programas, también en malware, y Defender suele marcarlo por aprendizaje automático
+          $env:PYINSTALLER_COMPILE_BOOTLOADER = '1'
+          pip install --no-binary pyinstaller pyinstaller==6.11.1
+        shell: pwsh
 
       - name: Node portátil para el motor
         shell: pwsh
@@ -65,6 +70,32 @@ jobs:
         run: |
           & "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe" /nologo /platform:x86 /optimize /out:holterlocal\hscribe\export180.exe holterlocal\hscribe\export180.cs
           if ($LASTEXITCODE -ne 0) { throw 'no compiló export180' }
+
+      - name: Datos de versión del .exe (empresa, producto, descripción)
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path holterlocal\__init__.py -Pattern "'(.+)'").Matches[0].Groups[1].Value
+          $n = ($v.Split('.') + @('0','0','0','0'))[0..3] -join ', '
+          @"
+          VSVersionInfo(
+            ffi=FixedFileInfo(filevers=($n), prodvers=($n), mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+            kids=[StringFileInfo([StringTable('040A04B0', [
+              StringStruct('CompanyName', 'HolterLocal'),
+              StringStruct('FileDescription', 'HolterLocal: análisis de Holter de ritmo'),
+              StringStruct('FileVersion', '$v'),
+              StringStruct('InternalName', 'HolterLocal'),
+              StringStruct('OriginalFilename', 'HolterLocal.exe'),
+              StringStruct('ProductName', 'HolterLocal'),
+              StringStruct('ProductVersion', '$v')])]),
+              VarFileInfo([VarStruct('Translation', [0x040A, 1200])])])
+          "@ | Set-Content -Encoding utf8 empaquetado\version_info.txt
+          # se agrega al .spec si este aún no la declara (así también sirve al armar ramas más antiguas)
+          $spec = Get-Content -Raw empaquetado\HolterLocal.spec
+          if ($spec -notmatch 'version=') {
+            $spec = $spec -replace "name='HolterLocal', console=False,", "name='HolterLocal', console=False, upx=False, version=os.path.join(SPECPATH, 'version_info.txt'),"
+            Set-Content -Encoding utf8 empaquetado\HolterLocal.spec $spec
+          }
+          Select-String -Path empaquetado\HolterLocal.spec -Pattern 'version='
 
       - name: Armar el .exe
         run: pyinstaller --noconfirm --distpath dist --workpath build empaquetado/HolterLocal.spec
