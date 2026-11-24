@@ -119,7 +119,7 @@ class Registro:
         p = ses.d.get('paciente') or {}
         it = self.items.get(ses.clave, {})
         it.update({'ruta': ses.ruta, 'origen': ses.d.get('origen', {}), 'nombre': ses.nombre or it.get('nombre', ''), 'apellido': p.get('apellido', ''),
-                   'nombres': p.get('nombre', ''), 'id': p.get('id', ''), 'estado': ses.d.get('estado', 'Adquirido'),
+                   'nombres': p.get('nombre', ''), 'id': p.get('id', ''), 'nacimiento': p.get('nacimiento', ''), 'estado': ses.d.get('estado', 'Adquirido'),
                    'modificado': time.strftime('%Y-%m-%d %H:%M')})
         if ex is not None:
             it['inicio'] = ex.reloj(0); it['duracion_h'] = round(ex.dur / 3600, 1)
