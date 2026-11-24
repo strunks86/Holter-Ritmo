@@ -5,6 +5,15 @@ on:
     branches: ['**']
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Rama o commit que se arma (vacío = esta rama)'
+        required: false
+        default: ''
+      publicar:
+        description: 'Publicar como versión de GitHub (vX.Y.Z), descargable sin iniciar sesión'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -17,6 +26,8 @@ jobs:
       NODE_VERSION: '22.12.0'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - uses: actions/setup-python@v5
         with:
@@ -85,10 +96,12 @@ jobs:
           if (-not (Select-String -Path autoprueba\mixto\autoprueba.txt -Pattern 'motor: mixto' -Quiet)) { throw 'el modo mixto no se aplicó' }
 
       - name: Instalador
+        id: instalador
         shell: pwsh
         run: |
           $v = (Select-String -Path holterlocal\__init__.py -Pattern "'(.+)'").Matches[0].Groups[1].Value
           $env:HL_VERSION = $v
+          "version=$v" >> $env:GITHUB_OUTPUT
           New-Item -ItemType Directory -Force salida | Out-Null
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
@@ -110,7 +123,10 @@ jobs:
           retention-days: 30
 
       - name: Publicar versión
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publicar)
         uses: softprops/action-gh-release@v2
         with:
           files: salida/*
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', steps.instalador.outputs.version) }}
+          target_commitish: ${{ startsWith(github.ref, 'refs/tags/v') && github.sha || inputs.ref || github.sha }}
+          name: ${{ format('HolterLocal {0}', steps.instalador.outputs.version) }}
