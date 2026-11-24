@@ -12,7 +12,7 @@ import numpy as np
 from PySide6.QtCore import QProcess, QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QIcon, QKeySequence
 from PySide6.QtWidgets import (QApplication, QDockWidget, QFileDialog, QLabel, QMainWindow, QMessageBox, QProgressBar, QProgressDialog,
-                               QSplitter, QTabWidget)
+                               QSplitter, QStackedWidget, QTabWidget)
 
 from . import __version__
 from .dialogos import (DialogoAjustes, DialogoArtefactos, DialogoBuscar, DialogoDiario, DialogoEtiquetas, DialogoFinalizar,
@@ -26,6 +26,7 @@ from .resumen import VistaResumen, grupos_finales, html_resumen
 from .resumen_ha import html_holterai
 from .sesion import Sesion
 from .tira import DURACIONES, GANANCIAS, PanelECG
+from .simple import ModoSimple
 from .tiras import POR_DEFECTO, DialogoTira, DialogoTirasAuto, VistaTiras, anotacion_en, generar_auto, nueva_tira
 from .vistas import VistaCriterios, VistaEventos, VistaHistogramas, VistaPlantillas, VistaTendencias, VistaValidacion
 from .darwin_arritmias import VistaArritmias, VistaBandas
@@ -84,7 +85,10 @@ class Principal(QMainWindow):
         self.v_pr.set_panel(self.panel)
         self.split = QSplitter(Qt.Vertical); self.split.addWidget(self.tabs); self.split.addWidget(self.panel); self.split.setSizes([470, 450])
         self.split.setChildrenCollapsible(True)
-        self.setCentralWidget(self.split)
+        # modo simple (flujo guiado) y modo experto (pestañas): se cambia sin perder nada
+        self.simple = ModoSimple(self); self.simple.experto.connect(lambda: self.modo_simple(False))
+        self.central = QStackedWidget(); self.central.addWidget(self.simple); self.central.addWidget(self.split)
+        self.setCentralWidget(self.central)
         # señales de las vistas
         for v in (self.v_ev, self.v_pl, self.v_tr, self.v_hi, self.v_ti, self.v_res, self.v_su):
             v.ir.connect(self.ir_a)
@@ -133,6 +137,17 @@ class Principal(QMainWindow):
         self.ha_proc = None; self.ha_timer = QTimer(self); self.ha_timer.timeout.connect(self._ha_poll)
         self.t_guardar = QTimer(self); self.t_guardar.setSingleShot(True); self.t_guardar.timeout.connect(self.guardar)
         self.motor.iniciar()
+        self.modo_simple(self.cfg.value('modo', 'simple') == 'simple')
+
+    def modo_simple(self, on):
+        self.cfg.setValue('modo', 'simple' if on else 'experto')
+        self.menuBar().setVisible(not on)
+        if on:
+            self.central.setCurrentWidget(self.simple)
+            self.simple.ir(self.simple.pag.currentIndex() if self.ex else 0)
+        else:
+            self.split.insertWidget(1, self.panel); self.panel.show()
+            self.central.setCurrentWidget(self.split)
 
     # =================================================================== menús
     def _acc(self, menu, txt, fn, sc=None, check=None):
@@ -203,6 +218,8 @@ class Principal(QMainWindow):
         self.a_osc = self._acc(f, 'Fondo oscuro', self._formato, 'Ctrl+D', False)
         self._acc(f, 'Filtro de pantalla 0,5–40 Hz', lambda: P.fil.setChecked(not P.fil.isChecked()))
         v = mb.addMenu('&Vista')
+        self._acc(v, 'Modo simple (flujo guiado)', lambda: self.modo_simple(True), 'Ctrl+M')
+        v.addSeparator()
         self._acc(v, 'Perfil', lambda: self.tabs.setCurrentWidget(self.v_pf), 'Ctrl+1')
         for at, nombre, sc in PESTANAS:
             if sc:
@@ -560,6 +577,8 @@ class Principal(QMainWindow):
         else:
             self.refrescar()
         self.tabs.setCurrentWidget(self.v_pf)
+        if self.central.currentWidget() is self.simple:
+            self.simple.examen_abierto(ex)
         self.estado.setText(f'{ex.nombre}: {len(ex.t):,} latidos analizados en {time.time() - self.t_ini:.0f} s'.replace(',', '.'))
         if self.ses.nueva:
             self.guardar()
@@ -668,6 +687,8 @@ class Principal(QMainWindow):
                 sys.stderr.write(f'vista {type(v).__name__}: {e!r}\n')
         self.panel.contexto.tiras = self.ses.d['tiras'] if self.ses else []
         self.panel.tira.update(); self.panel._sync(self.panel.tira.t0)
+        if self.central.currentWidget() is self.simple and self.simple.pag.currentIndex() in (1, 3):
+            self.simple.ir(self.simple.pag.currentIndex())
 
     def _menu_contexto_canal(self):
         self.m_ctx.clear(); g = QActionGroup(self.m_ctx)
@@ -680,7 +701,8 @@ class Principal(QMainWindow):
 
     # =================================================================== navegación
     def ir_a(self, t, b=-1):
-        if self.split.sizes()[1] < 50:
+        sz = self.split.sizes()
+        if len(sz) > 1 and sz[1] < 50:
             self.split.setSizes([470, 450])
         self.panel.ir_a(t, b)
 
